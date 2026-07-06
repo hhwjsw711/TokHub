@@ -59,7 +59,7 @@ test("phase 11.6 admin users, orgs, Open API governance, notifications and recom
   const email = `phase116-user-${suffix}@example.com`;
   const registered = await writeJSON(page, "/api/auth/register", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase116 User"
   });
   expect(registered.ok).toBeTruthy();
@@ -78,7 +78,7 @@ test("phase 11.6 admin users, orgs, Open API governance, notifications and recom
   const invalidUserStatus = await writeJSON(page, `/api/admin/users/${user?.id}/status`, "PATCH", { status: "enabled" });
   expect(invalidUserStatus.ok).toBeFalsy();
   expect(invalidUserStatus.status).toBe(400);
-  const blockedLogin = await writeJSON(page, "/api/auth/login", "POST", { email, password: "ChangeMe123!" });
+  const blockedLogin = await writeJSON(page, "/api/auth/login", "POST", { email, password: "admin@tokhub.local" });
   expect(blockedLogin.ok).toBeFalsy();
   await adminLogin(page, "/admin");
   const reactivated = await writeJSON(page, `/api/admin/users/${user?.id}/status`, "PATCH", { status: "active" });

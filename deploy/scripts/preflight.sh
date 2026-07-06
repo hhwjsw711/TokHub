@@ -73,7 +73,7 @@ if [[ "$secret_value" == "dev-only-change-this-secret-key-32b" || "$secret_value
   fail "TOKHUB_SECRET_KEY must be a non-default secret with at least 32 characters"
 fi
 
-if [[ "$admin_password_value" == "ChangeMe123!" || "$admin_password_value" == "replace-with-a-long-random-admin-password" || ${#admin_password_value} -lt 12 ]]; then
+if [[ "$admin_password_value" == "admin@tokhub.local" || "$admin_password_value" == "ChangeMe123!" || "$admin_password_value" == "replace-with-a-long-random-admin-password" || ${#admin_password_value} -lt 12 ]]; then
   fail "TOKHUB_ADMIN_PASSWORD must be a non-default value with at least 12 characters"
 fi
 

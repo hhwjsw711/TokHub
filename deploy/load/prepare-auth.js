@@ -75,7 +75,7 @@ async function readJSON(path) {
 
 await writeJSON("/api/auth/login", {
   email: process.env.TOKHUB_ADMIN_EMAIL || "admin@tokhub.local",
-  password: process.env.TOKHUB_ADMIN_PASSWORD || "ChangeMe123!"
+  password: process.env.TOKHUB_ADMIN_PASSWORD || "admin@tokhub.local"
 });
 await patchJSON("/api/admin/settings", { registrationOpen: true });
 

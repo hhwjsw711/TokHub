@@ -106,14 +106,14 @@ test("phase 8 full release journey and security gates", async ({ page }) => {
   const email = `phase8-${suffix}-release-user-with-long-email-address@example.com`;
   const registered = await writeJSON(page, "/api/auth/register", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase8 Release Workspace"
   });
   expect(registered.status).toBe(201);
   if (registered.payload.devVerificationToken) {
     await writeJSON(page, "/api/auth/verify-email", "POST", { token: registered.payload.devVerificationToken });
   }
-  const loggedIn = await writeJSON(page, "/api/auth/login", "POST", { email, password: "ChangeMe123!" });
+  const loggedIn = await writeJSON(page, "/api/auth/login", "POST", { email, password: "admin@tokhub.local" });
   expect(loggedIn.ok).toBeTruthy();
 
   const favorite = await writeJSON(page, `/api/me/favorites/${channelID}`, "PUT", {});

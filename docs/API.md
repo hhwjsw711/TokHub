@@ -68,7 +68,7 @@ curl -c cookies.txt http://localhost:8080/api/auth/csrf
 curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: <csrfToken>" \
-  -d '{"email":"admin@tokhub.local","password":"ChangeMe123!"}'
+  -d '{"email":"admin@tokhub.local","password":"admin@tokhub.local"}'
 ```
 
 核心接口：

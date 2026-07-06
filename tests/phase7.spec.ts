@@ -239,14 +239,14 @@ test("phase 7 audit is filtered by workspace and regular users cannot access adm
   const email = `phase7-${Date.now()}@example.com`;
   const registered = await writeJSON(page, "/api/auth/register", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase7 User"
   });
   expect(registered.ok).toBeTruthy();
   if (registered.payload.devVerificationToken) {
     await writeJSON(page, "/api/auth/verify-email", "POST", { token: registered.payload.devVerificationToken });
   }
-  const loggedIn = await writeJSON(page, "/api/auth/login", "POST", { email, password: "ChangeMe123!" });
+  const loggedIn = await writeJSON(page, "/api/auth/login", "POST", { email, password: "admin@tokhub.local" });
   expect(loggedIn.ok).toBeTruthy();
 
   const adminAudit = await readJSON(page, "/api/admin/audit");

@@ -31,7 +31,7 @@ TOKHUB_BASE_URL=http://localhost:8080 npm run test:smoke
 ```bash
 TOKHUB_BASE_URL=http://localhost:8080 \
 TOKHUB_ADMIN_EMAIL=admin@tokhub.local \
-TOKHUB_ADMIN_PASSWORD='ChangeMe123!' \
+TOKHUB_ADMIN_PASSWORD='admin@tokhub.local' \
 TOKHUB_ADMIN_AGENT_TOKEN_NAME=codex-admin \
 TOKHUB_ADMIN_AGENT_TOKEN_SCOPES='admin:*' \
 TOKHUB_ADMIN_AGENT_TOKEN_TTL_HOURS=24 \

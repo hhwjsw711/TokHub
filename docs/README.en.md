@@ -184,7 +184,7 @@ Default endpoints:
 - Metrics: `http://localhost:8080/metrics`
 - Gateway: `http://localhost:8080/gateway/v1/*`
 - Local admin email: `admin@tokhub.local`
-- Local admin password: `ChangeMe123!`
+- Local admin password: `admin@tokhub.local`
 
 The default credentials are for local development only. Production deployments must replace `TOKHUB_ADMIN_PASSWORD` and `TOKHUB_SECRET_KEY` in `.env.production`.
 

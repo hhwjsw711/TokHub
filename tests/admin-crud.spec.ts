@@ -47,7 +47,7 @@ function sidebarCountLabel(value: number) {
 async function loginAs(page: Page, email: string) {
   const loggedIn = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(loggedIn.ok).toBeTruthy();
 }
@@ -244,7 +244,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   const email = `crud-user-${suffix}@tokhub.run`;
   const createdUser = await writeJSON(page, "/api/admin/users", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD User ${suffix}`,
     role: "user",
     status: "active",
@@ -291,7 +291,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   for (const batchEmail of batchEmails) {
     const created = await writeJSON(page, "/api/admin/users", "POST", {
       email: batchEmail,
-      password: "ChangeMe123!",
+      password: "admin@tokhub.local",
       name: batchEmail.split("@")[0],
       role: "user",
       status: "active",
@@ -353,7 +353,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   const singleDeleteEmail = `crud-user-single-delete-${suffix}@tokhub.run`;
   const singleDeleteUser = await writeJSON(page, "/api/admin/users", "POST", {
     email: singleDeleteEmail,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD Single Delete User ${suffix}`,
     role: "user",
     status: "active",
@@ -375,7 +375,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   const disabledGatewayEmail = `crud-user-disable-gateway-${suffix}@tokhub.run`;
   const disabledGatewayUser = await writeJSON(page, "/api/admin/users", "POST", {
     email: disabledGatewayEmail,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD Disable Gateway User ${suffix}`,
     role: "user",
     status: "active",
@@ -403,7 +403,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   const disabledOrgEmail = `crud-org-disable-gateway-${suffix}@tokhub.run`;
   const disabledOrgUser = await writeJSON(page, "/api/admin/users", "POST", {
     email: disabledOrgEmail,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD Disable Org Gateway User ${suffix}`,
     role: "user",
     status: "active",
@@ -492,7 +492,7 @@ test("admin users and orgs support create, filter, edit, bulk update and delete"
   const deletedOrgEmail = `crud-org-delete-gateway-${suffix}@tokhub.run`;
   const deletedOrgUser = await writeJSON(page, "/api/admin/users", "POST", {
     email: deletedOrgEmail,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD Delete Org Gateway User ${suffix}`,
     role: "user",
     status: "active",
@@ -1137,7 +1137,7 @@ test("admin gateways, gateway keys and platform members support CRUD governance"
   const memberEmail = `crud-member-${suffix}@tokhub.run`;
   const createdMemberUser = await writeJSON(page, "/api/admin/users", "POST", {
     email: memberEmail,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: `CRUD Member ${suffix}`,
     role: "user",
     status: "active",
@@ -1168,7 +1168,7 @@ test("admin gateways, gateway keys and platform members support CRUD governance"
     const email = `crud-batch-member-${label}-${suffix}@tokhub.run`;
     const created = await writeJSON(page, "/api/admin/users", "POST", {
       email,
-      password: "ChangeMe123!",
+      password: "admin@tokhub.local",
       name: `CRUD Batch Member ${label.toUpperCase()} ${suffix}`,
       role: "user",
       status: "active",

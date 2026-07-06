@@ -45,7 +45,7 @@ test("phase 4 registration switch and registration flow", async ({ page }) => {
     await expect(page.getByRole("button", { name: "注册新账号" })).toHaveCount(0);
     const closedRegister = await writeJSON(page, "/api/auth/register", "POST", {
       email: `closed-${Date.now()}@example.com`,
-      password: "ChangeMe123!",
+      password: "admin@tokhub.local",
       name: "Closed"
     });
     expect(closedRegister.ok).toBeFalsy();
@@ -59,7 +59,7 @@ test("phase 4 registration switch and registration flow", async ({ page }) => {
   await page.getByRole("button", { name: "注册新账号" }).click();
   const email = `phase4-${Date.now()}@example.com`;
   await page.getByLabel("邮箱").fill(email);
-  await page.getByLabel("设置密码").fill("ChangeMe123!");
+  await page.getByLabel("设置密码").fill("admin@tokhub.local");
   await page.getByRole("button", { name: "创建账号并进入控制台 →" }).click();
   const verificationToken = page.getByText("邮箱验证令牌", { exact: true });
   if (await verificationToken.isVisible({ timeout: 2_000 }).catch(() => false)) {
@@ -77,20 +77,20 @@ test("phase 4 favorites, private channels, quota and key masking", async ({ page
   const email = `phase4-flow-${Date.now()}@example.com`;
   const registered = await writeJSON(page, "/api/auth/register", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase4 Flow"
   });
   expect(registered.ok).toBeTruthy();
   const blockedLogin = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   if (registered.payload.verificationRequired) {
     expect(blockedLogin.status).toBe(403);
     await writeJSON(page, "/api/auth/verify-email", "POST", { token: registered.payload.devVerificationToken });
     const loggedIn = await writeJSON(page, "/api/auth/login", "POST", {
       email,
-      password: "ChangeMe123!"
+      password: "admin@tokhub.local"
     });
     expect(loggedIn.ok).toBeTruthy();
   } else {

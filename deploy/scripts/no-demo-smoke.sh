@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_URL="${TOKHUB_BASE_URL:-http://localhost:${TOKHUB_HOST_PORT:-8080}}"
 BASE_URL="${BASE_URL%/}"
 ADMIN_EMAIL="${TOKHUB_ADMIN_EMAIL:-admin@tokhub.local}"
-ADMIN_PASSWORD="${TOKHUB_ADMIN_PASSWORD:-ChangeMe123!}"
+ADMIN_PASSWORD="${TOKHUB_ADMIN_PASSWORD:-admin@tokhub.local}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 

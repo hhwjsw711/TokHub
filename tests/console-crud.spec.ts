@@ -33,7 +33,7 @@ async function readJSON(page: Page, path: string) {
 async function createVerifiedUser(page: Page, email: string, name: string) {
   const created = await writeJSON(page, "/api/admin/users", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name,
     role: "user",
     status: "active",
@@ -46,7 +46,7 @@ async function createVerifiedUser(page: Page, email: string, name: string) {
 async function loginAs(page: Page, email: string) {
   const loggedIn = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(loggedIn.ok).toBeTruthy();
 }

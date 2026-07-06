@@ -45,7 +45,7 @@ func LoadConfig() Config {
 		SecretKey:         getEnv("TOKHUB_SECRET_KEY", "dev-only-change-this-secret-key-32b"),
 		AdminEmail:        getEnv("TOKHUB_ADMIN_EMAIL", "admin@tokhub.local"),
 		AdminUsername:     normalizeLoginUsername(getEnv("TOKHUB_ADMIN_USERNAME", "admin")),
-		AdminPassword:     getEnv("TOKHUB_ADMIN_PASSWORD", "ChangeMe123!"),
+		AdminPassword:     getEnv("TOKHUB_ADMIN_PASSWORD", "admin@tokhub.local"),
 		SeedMode:          seedMode(env),
 		UpstreamMode:      upstreamMode(env),
 		StaticDir:         getEnv("TOKHUB_STATIC_DIR", "web/dist"),

@@ -63,7 +63,7 @@ test("phase 6.5 regular user stays in console and cannot access platform admin",
   const email = `phase65-${Date.now()}@example.com`;
   const createdUser = await writeJSON(page, "/api/admin/users", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase65 User",
     role: "user",
     plan: "free",
@@ -75,7 +75,7 @@ test("phase 6.5 regular user stays in console and cannot access platform admin",
 
   const loggedIn = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(loggedIn.ok).toBeTruthy();
 
@@ -99,7 +99,7 @@ test("phase 6.5 workspace gateway uses private channels by default and platform 
   const email = `phase65-gateway-${suffix}@example.com`;
   const createdUser = await writeJSON(page, "/api/admin/users", "POST", {
     email,
-    password: "ChangeMe123!",
+    password: "admin@tokhub.local",
     name: "Phase65 Gateway User",
     role: "user",
     plan: "free",
@@ -111,7 +111,7 @@ test("phase 6.5 workspace gateway uses private channels by default and platform 
 
   const loggedIn = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(loggedIn.ok).toBeTruthy();
 
@@ -151,7 +151,7 @@ test("phase 6.5 workspace gateway uses private channels by default and platform 
 
   const reloggedFree = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(reloggedFree.ok).toBeTruthy();
 
@@ -182,7 +182,7 @@ test("phase 6.5 workspace gateway uses private channels by default and platform 
 
   const reloggedVIP = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(reloggedVIP.ok).toBeTruthy();
   const vipConsoleData = await readJSON(page, "/api/console/gateways");
@@ -206,7 +206,7 @@ test("phase 6.5 workspace gateway uses private channels by default and platform 
 
   const reloggedDemoted = await writeJSON(page, "/api/auth/login", "POST", {
     email,
-    password: "ChangeMe123!"
+    password: "admin@tokhub.local"
   });
   expect(reloggedDemoted.ok).toBeTruthy();
   const demotedConsoleData = await readJSON(page, "/api/console/gateways");

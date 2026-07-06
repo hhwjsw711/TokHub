@@ -60,7 +60,7 @@ export function adminEmail() {
 }
 
 export function adminPassword() {
-  return projectEnvValue("TOKHUB_E2E_ADMIN_PASSWORD") || projectEnvValue("TOKHUB_ADMIN_PASSWORD") || "ChangeMe123!";
+  return projectEnvValue("TOKHUB_E2E_ADMIN_PASSWORD") || projectEnvValue("TOKHUB_ADMIN_PASSWORD") || "admin@tokhub.local";
 }
 
 export async function adminLogin(page: Page, next = "/admin") {
