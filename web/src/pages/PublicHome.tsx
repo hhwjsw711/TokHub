@@ -428,7 +428,7 @@ export function PublicHome() {
           <KPI label="功能性故障" value={`${overview?.functionalDown ?? 0}`} foot="入口正常但模型不可用" color="var(--magenta)" soft="var(--magenta-soft)" />
           <KPI label="连通异常" value={`${overview?.connectivityDown ?? 0}`} foot={`${overview?.degraded ?? 0} 个降级通道`} color="var(--red)" soft="var(--red-soft)" />
           <KPI label="真实调用 P95 延迟" value={(overview?.p95LatencySeconds ?? 0).toFixed(2)} unit="s" foot={`平均 ${overview?.averageLatencyMs ?? 0}ms · 慢响应率 ${overview?.slowRate ?? 0}%`} color="var(--blue)" soft="var(--blue-soft)" />
-          <KPI label="今日探测 Token 成本" value={`$${(overview?.probeCostToday ?? 0).toFixed(2)}`} foot={`${compact(overview?.probeTokensToday ?? 0)} tokens · ${overview?.probeRunsToday ?? 0} 次探测`} color="var(--amber)" soft="var(--amber-soft)" />
+          <KPI label="今日探测 Token 成本" value={formatSmallUSD(overview?.probeCostToday ?? 0)} foot={`${compact(overview?.probeTokensToday ?? 0)} tokens · ${overview?.probeRunsToday ?? 0} 次探测`} color="var(--amber)" soft="var(--amber-soft)" />
         </section>
 
         <div className="section-head" id="board">
@@ -1006,7 +1006,7 @@ function ChannelPreviewDialog({ channel, isFavorite, onToggleFavorite, onClose }
             <PreviewMetric label="真实延迟" value={channel.latencyP95Ms ? `${channel.latencyP95Ms}ms` : "—"} />
             <PreviewMetric label="成功率" value={`${channel.successRate.toFixed(1)}%`} />
             <PreviewMetric label="L1 / L2" value={`${channel.l1LatencyMs || 0}ms / ${channel.l2LatencyMs || 0}ms`} />
-            <PreviewMetric label="今日成本" value={`$${channel.costUsd.toFixed(2)}`} />
+            <PreviewMetric label="今日成本" value={formatSmallUSD(channel.costUsd)} />
             <PreviewMetric label="最后探测" value={timeLabel(channel.lastProbeAt)} />
           </div>
 
@@ -1989,6 +1989,14 @@ function timeLabel(value: string) {
 function compact(value: number) {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
   return String(value);
+}
+
+function formatSmallUSD(value: number) {
+  const safe = Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (safe === 0) return "$0.00";
+  if (safe < 0.001) return "<$0.001";
+  if (safe < 1) return `$${safe.toFixed(3)}`;
+  return `$${safe.toFixed(2)}`;
 }
 
 function shortFingerprint(value: string) {

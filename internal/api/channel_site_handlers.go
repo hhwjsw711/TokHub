@@ -528,6 +528,13 @@ async function get(path,fallback){
   }catch{return fallback;}
 }
 function statusClass(s){return s==="healthy"?"healthy":s==="degraded"?"degraded":s==="unknown"?"unknown":"down";}
+function money(v){
+  const n=Number.isFinite(Number(v))?Math.max(0,Number(v)):0;
+  if(n===0)return "$0.00";
+  if(n<0.001)return "<$0.001";
+  if(n<1)return "$"+n.toFixed(3);
+  return "$"+n.toFixed(2);
+}
 function renderOverview(o){
   if(!$("overview"))return;
   const items=[
@@ -535,7 +542,7 @@ function renderOverview(o){
     ["功能性故障",o.functionalDown||0,"入口正常但模型不可用"],
     ["连通异常",o.connectivityDown||0,"基础链路故障"],
     ["真实调用 P95",((o.p95LatencySeconds||0)).toFixed(2)+"s","真实生成延迟"],
-    ["今日探测成本","$"+(o.probeCostToday||0).toFixed(2),(o.probeTokensToday||0)+" tokens"]
+    ["今日探测成本",money(o.probeCostToday),(o.probeTokensToday||0)+" tokens"]
   ];
   $("overview").innerHTML=items.map(([k,v,d])=>"<div class=\"stat\"><div class=\"k\">"+esc(k)+"</div><div class=\"v\">"+esc(v)+"</div><div class=\"d\">"+esc(d)+"</div></div>").join("");
 }

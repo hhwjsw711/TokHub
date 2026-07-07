@@ -210,7 +210,7 @@ func (r *Repository) PublicOverview(ctx context.Context) (PublicOverview, error)
 		return PublicOverview{}, err
 	}
 	o.ProbeTokensToday = tokens
-	o.ProbeCostToday = round3(cost)
+	o.ProbeCostToday = round6(cost)
 	if err := r.db.QueryRow(ctx, `
 		select count(*)
 		from probe_runs pr
@@ -406,7 +406,7 @@ func (r *Repository) PublicChannelSeries(ctx context.Context, channelID string, 
 			LatencyHighMs:  item.high,
 			LatencyLowMs:   item.low,
 			ProbeCount:     item.probes,
-			CostUSD:        round3(item.cost),
+			CostUSD:        round6(item.cost),
 		})
 	}
 	return points, nil
@@ -741,7 +741,7 @@ func scanPublicChannels(rows pgx.Rows) ([]PublicChannel, error) {
 		if introUpdatedAt.Valid {
 			ch.IntroUpdatedAt = &introUpdatedAt.Time
 		}
-		ch.CostUSD = round3(cost)
+		ch.CostUSD = round6(cost)
 		ch.StatusLabel = statusLabel(ch.Status)
 		ch.Diagnosis = channelDiagnosis(ch)
 		ch.Mark = providerMark(ch.Provider)
@@ -995,7 +995,7 @@ func (r *Repository) publicCosts(ctx context.Context, channelID string, days int
 			return nil, err
 		}
 		point.Date = day.Format("2006-01-02")
-		point.CostUSD = round3(cost)
+		point.CostUSD = round6(cost)
 		byDay[point.Date] = point
 	}
 	if err := rows.Err(); err != nil {

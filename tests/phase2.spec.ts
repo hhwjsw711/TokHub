@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Route } from "@playwright/test";
 
 type PublicChannel = {
   id: string;
@@ -73,6 +73,65 @@ test("phase 2 public pages support filters and deep links", async ({ page, reque
   await expect(page.getByRole("heading", { name: new RegExp(channel.name) })).toBeVisible();
   await expect(page.getByText(/基础监控/).first()).toBeVisible();
   await expect(page.getByText(/真实监控/).first()).toBeVisible();
+});
+
+test("phase 2 dashboard preserves sub-cent probe cost display", async ({ page }) => {
+  const fulfillJSON = (route: Route, value: unknown) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(value) });
+
+  await page.route("**/api/public/**", (route) => {
+    const url = new URL(route.request().url());
+    switch (url.pathname) {
+      case "/api/public/overview":
+        return fulfillJSON(route, {
+          total: 1,
+          healthy: 1,
+          functionalDown: 0,
+          connectivityDown: 0,
+          degraded: 0,
+          unknown: 0,
+          healthyRate: 100,
+          p95LatencySeconds: 0.82,
+          averageLatencyMs: 820,
+          slowRate: 0,
+          probeCostToday: 0.002044,
+          probeTokensToday: 393,
+          probeRunsToday: 235,
+          updatedAt: new Date().toISOString()
+        });
+      case "/api/public/channels":
+        return fulfillJSON(route, { items: [], total: 0, page: 1, pageSize: 100 });
+      case "/api/public/providers/rank":
+      case "/api/public/errors/summary":
+        return fulfillJSON(route, { items: [] });
+      case "/api/public/site-config":
+        return fulfillJSON(route, {
+          registrationOpen: true,
+          showRegisterCta: true,
+          emailVerificationRequired: false,
+          adminPath: "/admin",
+          brandName: "TokHub",
+          logoMark: "T",
+          subtitle: "",
+          publicUrl: "",
+          footerText: "",
+          defaultGatewayPolicy: "latency",
+          timezone: "Asia/Shanghai",
+          navItems: [],
+          footerLinks: [],
+          monitorModels: [],
+          analyticsCode: ""
+        });
+      default:
+        return route.fallback();
+    }
+  });
+  await page.route("**/api/auth/me", (route) => fulfillJSON(route, { user: null }));
+
+  await page.goto("/dashboard");
+  const card = page.locator(".kpi", { hasText: "今日探测 Token 成本" });
+  await expect(card.locator(".k-value")).toHaveText("$0.002");
+  await expect(card.locator(".k-foot")).toHaveText("393 tokens · 235 次探测");
 });
 
 test("phase 2 channel row opens preview drawer before full detail", async ({ page, request }) => {
