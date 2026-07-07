@@ -1,4 +1,8 @@
-create extension if not exists timescaledb cascade;
+do $$ begin
+  create extension if not exists timescaledb cascade;
+exception when others then
+  raise notice 'timescaledb extension not available, skipping';
+end $$;
 
 create table if not exists users (
   id text primary key,
