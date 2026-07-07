@@ -374,6 +374,41 @@ export function publicChannelPath(channel: Pick<PublicChannel, "id" | "publicSlu
   return ref ? `/channels/${encodeURIComponent(ref)}` : "/dashboard";
 }
 
+export function externalHTTPHref(value?: string) {
+  try {
+    const parsed = new URL((value || "").trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
+export function officialExperienceHref(channel: Pick<PublicChannel, "officialSiteUrl" | "endpoint">) {
+  return externalHTTPHref(channel.officialSiteUrl) || officialEntryURL(channel.endpoint);
+}
+
+export function officialEntryURL(endpoint?: string) {
+  try {
+    const parsed = new URL((endpoint || "").trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    const hostname = publicWebsiteHost(parsed.hostname);
+    return hostname ? `https://${hostname}` : "";
+  } catch {
+    return "";
+  }
+}
+
+export function publicWebsiteHost(hostname: string) {
+  const parts = hostname.toLowerCase().split(".").filter(Boolean);
+  if (parts.length < 2) return "";
+  const apiPrefixes = new Set(["api", "api2", "cc-api", "chat-api", "openapi", "gateway", "proxy", "relay", "upstream"]);
+  while (parts.length > 2 && apiPrefixes.has(parts[0])) {
+    parts.shift();
+  }
+  return parts.join(".");
+}
+
 export type PublicChannelList = {
   items: PublicChannel[];
   total: number;

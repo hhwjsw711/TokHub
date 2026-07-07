@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Footer } from "../components/Footer";
 import { PublicNav } from "../components/PublicNav";
-import { adminProbeNow, currentUser, disableAdminChannel, publicChannel, publicChannelPath, publicChannelSeries, PublicChannel, PublicChannelDetail, SeriesPoint, User } from "../lib/api";
+import { addFavorite, adminProbeNow, currentUser, disableAdminChannel, favoriteChannels, officialExperienceHref, publicChannel, publicChannelPath, publicChannelSeries, PublicChannel, PublicChannelDetail, removeFavorite, SeriesPoint, User } from "../lib/api";
 
 const statusClass: Record<string, string> = {
   healthy: "b-green",
@@ -23,6 +23,8 @@ export function ChannelDetailPage() {
   const [range, setRange] = useState(30);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState("");
+  const [favoriteIDs, setFavoriteIDs] = useState<Set<string>>(new Set());
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -39,6 +41,26 @@ export function ChannelDetailPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!user) {
+      setFavoriteIDs(new Set());
+      return () => {
+        active = false;
+      };
+    }
+    favoriteChannels()
+      .then((value) => {
+        if (active) setFavoriteIDs(new Set(value.ids));
+      })
+      .catch(() => {
+        if (active) setFavoriteIDs(new Set());
+      });
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   useEffect(() => {
     let active = true;
@@ -73,11 +95,12 @@ export function ChannelDetailPage() {
       max: Math.max(...series.map((item) => item.healthIndex))
     };
   }, [series]);
-  const officialHref = current ? externalHTTPHref(current.officialSiteUrl) : "";
+  const officialHref = current ? officialExperienceHref(current) : "";
   const officialHost = officialHref ? hostLabel(officialHref) : "";
   const endpointHost = current ? hostLabel(current.endpoint) : "";
   const detailPath = current ? publicChannelPath(current) : `/channels/${channelID}`;
   const intro = current ? channelIntroContent(current, officialHost, endpointHost) : null;
+  const isFavorite = current ? favoriteIDs.has(current.id) : false;
 
   useEffect(() => {
     if (!current?.publicSlug || channelID === current.publicSlug) return;
@@ -124,6 +147,34 @@ export function ChannelDetailPage() {
     }
   }
 
+  async function toggleFavorite() {
+    if (!current) return;
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(detailPath)}`);
+      return;
+    }
+    setFavoriteLoading(true);
+    setError("");
+    setNotice("");
+    const next = new Set(favoriteIDs);
+    try {
+      if (next.has(current.id)) {
+        await removeFavorite(current.id);
+        next.delete(current.id);
+        setNotice("已取消关注该通道。");
+      } else {
+        await addFavorite(current.id);
+        next.add(current.id);
+        setNotice("已加入我的关注，后续可在用户控制台快速查看。");
+      }
+      setFavoriteIDs(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "关注操作失败");
+    } finally {
+      setFavoriteLoading(false);
+    }
+  }
+
   return (
     <>
       <PublicNav />
@@ -148,17 +199,6 @@ export function ChannelDetailPage() {
                   <button className={range === item ? "active" : ""} onClick={() => setRange(item)} key={item}>{item}天</button>
                 ))}
               </div>
-              {officialHref ? (
-                <a
-                  className="btn btn-primary btn-sm official-entry-btn"
-                  href={officialHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={officialHost ? `打开 ${officialHost} 官方入口` : "打开官方入口"}
-                >
-                  官方注册 / 体验
-                </a>
-              ) : null}
               {canAdminManage ? (
                 <>
                   <button className="btn btn-ghost btn-sm" type="button" disabled={!current || current.status === "disabled" || actionLoading === "pause"} onClick={() => void pauseProbe()}>
@@ -184,57 +224,79 @@ export function ChannelDetailPage() {
         {loading ? <div className="card card-pad">正在加载通道详情…</div> : null}
         {detail && current ? (
           <>
-            <section className={`diagnosis-banner ${diagnosisClass(current.diagnosis?.severity)}`} aria-label="监控诊断">
-              <div>
-                <b>{current.diagnosis?.label || current.statusLabel}</b>
-                <span>{current.diagnosis?.hint || "系统已根据最近 L1/L2/L3 探测结果生成当前判断。"}</span>
-              </div>
-              <span className="diagnosis-code">{current.diagnosis?.code || current.status}</span>
-            </section>
-            <section className="card card-pad channel-intro-card" aria-labelledby="channel-intro-title">
-              <div className="channel-intro-main">
-                <div className="channel-intro-brandline">
-                  <ChannelLogo channel={current} />
-                  <div>
-                    <div className="module-title" id="channel-intro-title">{intro?.title}</div>
-                    <div className="module-sub">{intro?.summary}</div>
+            <section className="card card-pad channel-intro-card channel-profile-card" aria-labelledby="channel-intro-title">
+              <div className="channel-profile-layout">
+                <div className="channel-profile-main">
+                  <div className="channel-profile-head">
+                    <ChannelLogo channel={current} />
+                    <div className="channel-profile-identity">
+                      <div className="channel-profile-title-line">
+                        <h2 id="channel-intro-title">{intro?.title}</h2>
+                        <span className={`badge ${statusClass[current.status] ?? "b-gray"} dot`}>{current.statusLabel}</span>
+                      </div>
+                      <div className="channel-profile-summary">{intro?.summary}</div>
+                      <div className="channel-profile-meta">
+                        <span>{current.type.toUpperCase()}</span>
+                        <span>{current.model}</span>
+                        {officialHost ? <span>{officialHost}</span> : null}
+                      </div>
+                    </div>
                   </div>
+                  <div className="channel-intro-copy channel-profile-copy">
+                    <RichIntro text={intro?.body ?? ""} />
+                  </div>
+                  <dl className="channel-profile-facts">
+                    <div><dt>服务商</dt><dd>{current.provider}</dd></div>
+                    <div><dt>模型</dt><dd>{current.model}</dd></div>
+                    <div><dt>上游模型</dt><dd>{current.upstreamModel}</dd></div>
+                    <div><dt>兼容类型</dt><dd>{current.type.toUpperCase()}</dd></div>
+                    <div><dt>接入域名</dt><dd>{endpointHost || "暂未识别"}</dd></div>
+                    <div><dt>诊断</dt><dd>{current.diagnosis?.label || "等待诊断"}</dd></div>
+                  </dl>
                 </div>
-              </div>
-              <div className="channel-intro-layout">
-                <div className="channel-intro-copy">
-                  <RichIntro text={intro?.body ?? ""} />
-                  {intro?.highlights.length ? (
-                    <ul className="channel-intro-highlights">
-                      {intro.highlights.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                    </ul>
-                  ) : null}
-                  <div className="channel-intro-ctas">
+                <aside className="channel-profile-sidebar" aria-label="通道操作与信息">
+                  <div className="channel-rank-panel">
+                    <div className="channel-rank-head">
+                      <div>
+                        <span>TokHub Index</span>
+                        <strong>{current.score.toFixed(1)}</strong>
+                      </div>
+                      <span className={`badge ${statusClass[current.status] ?? "b-gray"} dot`}>{current.statusLabel}</span>
+                    </div>
+                    <div className="channel-rank-metrics">
+                      <span><b>{current.uptime24h.toFixed(1)}%</b><small>24h 可用率</small></span>
+                      <span><b>{current.successRate.toFixed(1)}%</b><small>真实成功率</small></span>
+                      <span><b>{current.latencyP95Ms}ms</b><small>P95 延迟</small></span>
+                    </div>
+                    <button
+                      className={`channel-upvote-btn ${isFavorite ? "is-on" : ""}`}
+                      type="button"
+                      disabled={favoriteLoading}
+                      onClick={() => void toggleFavorite()}
+                    >
+                      <span aria-hidden="true" />
+                      {favoriteLoading ? "处理中..." : isFavorite ? "已关注" : user ? "关注通道" : "登录后关注"}
+                    </button>
                     {officialHref ? (
                       <a
-                        className="btn btn-primary btn-sm"
+                        className="channel-experience-btn"
                         href={officialHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title={officialHost ? `打开 ${officialHost} 官方入口` : "打开官方入口"}
+                        title={officialHost ? `打开 ${officialHost} 官方体验入口` : "打开官方体验入口"}
                       >
-                        去官方注册体验
+                        去官方注册 / 体验
                       </a>
                     ) : null}
-                    <a className="btn btn-ghost btn-sm" href="#tokhub-index" onClick={scrollToTokHubIndex}>查看最新监控数据</a>
+                    <div className="channel-profile-actions">
+                      <a className="btn btn-ghost btn-sm" href="#tokhub-index" onClick={scrollToTokHubIndex}>查看监控</a>
+                    </div>
+                    <dl className="channel-side-meta">
+                      <div><dt>官方入口</dt><dd>{officialHost || "暂未配置"}</dd></div>
+                      <div><dt>公开短地址</dt><dd>{detailPath}</dd></div>
+                    </dl>
                   </div>
-                </div>
-                <dl className="channel-intro-facts">
-                  <div><dt>服务商</dt><dd>{current.provider}</dd></div>
-                  <div><dt>模型</dt><dd>{current.model}</dd></div>
-                  <div><dt>上游模型</dt><dd>{current.upstreamModel}</dd></div>
-                  <div><dt>兼容类型</dt><dd>{current.type.toUpperCase()}</dd></div>
-                  <div><dt>官方入口</dt><dd>{officialHost || "暂未配置"}</dd></div>
-                  <div><dt>接入域名</dt><dd>{endpointHost || "暂未识别"}</dd></div>
-                  <div><dt>公开短地址</dt><dd>{detailPath}</dd></div>
-                  <div><dt>当前状态</dt><dd>{current.statusLabel}</dd></div>
-                  <div><dt>诊断</dt><dd>{current.diagnosis?.label || "等待诊断"}</dd></div>
-                </dl>
+                </aside>
               </div>
             </section>
 
@@ -395,11 +457,10 @@ function scrollToTokHubIndex(event: MouseEvent<HTMLAnchorElement>) {
 }
 
 function channelIntroContent(channel: PublicChannel, officialHost: string, endpointHost: string) {
-  const title = channel.introTitle?.trim() || `${channel.name} 官方介绍`;
+  const title = channel.introTitle?.trim() || `${channel.provider} 官方介绍`;
   const summary = channel.introSummary?.trim() || "基于官网入口、通道配置和 TokHub 真实监控数据整理";
   const body = channel.introBody?.trim() || fallbackChannelIntroBody(channel, officialHost, endpointHost);
-  const highlights = channel.introHighlights?.length ? channel.introHighlights : fallbackChannelHighlights(channel, officialHost, endpointHost);
-  return { title, summary, body, highlights };
+  return { title, summary, body };
 }
 
 function fallbackChannelIntroBody(channel: PublicChannel, officialHost: string, endpointHost: string) {
@@ -410,17 +471,6 @@ function fallbackChannelIntroBody(channel: PublicChannel, officialHost: string, 
 这个详情页把官网入口、模型信息、协议类型、Endpoint 域名和真实探测结果整理在同一处，方便开发者在注册或接入前先完成可用性判断。官方侧可通过 ${official} 进入注册或体验，TokHub 侧持续记录 L1 DNS/TCP/TLS/HTTP、L2 模型列表与鉴权、L3 最小生成调用。
 
 对于正在评估 ${endpoint} 的团队，可以先查看 ${channel.score} 分综合指数、${channel.uptime24h.toFixed(1)}% 24H 可用率、${channel.successRate.toFixed(1)}% 真实生成成功率和 ${channel.latencyP95Ms}ms P95 延迟，再决定是否进入官网注册、加入个人关注、配置私有 API Key 或放入企业网关候选。`;
-}
-
-function fallbackChannelHighlights(channel: PublicChannel, officialHost: string, endpointHost: string) {
-  return [
-    `服务商：${channel.provider}`,
-    `模型：${channel.model}`,
-    `上游模型：${channel.upstreamModel}`,
-    `兼容类型：${channel.type.toUpperCase()}`,
-    officialHost ? `官方入口：${officialHost}` : "",
-    endpointHost ? `接入域名：${endpointHost}` : ""
-  ].filter(Boolean);
 }
 
 function DKPI({ label, value, hint }: { label: string; value: string; hint: string }) {
@@ -524,23 +574,6 @@ function hostLabel(href: string) {
   } catch {
     return "";
   }
-}
-
-function externalHTTPHref(value?: string) {
-  try {
-    const parsed = new URL((value || "").trim());
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return parsed.href;
-  } catch {
-    return "";
-  }
-}
-
-function diagnosisClass(severity?: string) {
-  if (severity === "error") return "is-error";
-  if (severity === "warn") return "is-warn";
-  if (severity === "ok") return "is-ok";
-  return "is-info";
 }
 
 function compact(value: number) {

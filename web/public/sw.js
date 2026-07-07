@@ -1,4 +1,4 @@
-const CACHE_NAME = "tokhub-pwa-v2";
+const CACHE_NAME = "tokhub-pwa-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

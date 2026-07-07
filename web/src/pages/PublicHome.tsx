@@ -13,6 +13,7 @@ import {
   favoriteChannels,
   login,
   MonitorModelConfig,
+  officialExperienceHref,
   providerRank,
   ProviderRank,
   PrivateChannel,
@@ -890,6 +891,7 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
             <col className="brand-col-uptime" />
             <col className="brand-col-score" />
             <col className="brand-col-trend" />
+            <col className="brand-col-action" />
           </colgroup>
           <thead>
             <tr>
@@ -902,6 +904,7 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
               <th>24h 可用率</th>
               <th>质量评分</th>
               <th>近30天趋势</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -937,7 +940,8 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
                 <td className="num">{ch.latencyP95Ms ? `${ch.latencyP95Ms}ms` : "—"}</td>
                 <td className="num">{ch.uptime24h.toFixed(1)}%</td>
                 <td><Score value={ch.score} /></td>
-                <td className="channel-trend-cell tk-trend-cell"><TrendBars values={ch.trend} maxWidth="116px" /></td>
+                <td className="channel-trend-cell tk-trend-cell"><TrendBars values={ch.trend} maxWidth="146px" /></td>
+                <td className="channel-action-cell"><OfficialRegisterAction channel={ch.primaryChannel} /></td>
               </tr>
             ))}
           </tbody>
@@ -962,7 +966,7 @@ function ChannelPreviewDialog({ channel, isFavorite, onToggleFavorite, onClose }
   }
   const statusTone = scoreColor(channel.score);
   const waterfall = buildPreviewWaterfall(channel);
-  const officialHref = externalHTTPHref(channel.officialSiteUrl);
+  const officialHref = officialExperienceHref(channel);
   return (
     <div className={`drawer-mask ${open ? "open" : ""}`} role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className={`drawer channel-preview-drawer ${open ? "open" : ""}`} role="dialog" aria-modal="true" aria-labelledby="channel-preview-title" onClick={(event) => event.stopPropagation()}>
@@ -1302,16 +1306,6 @@ function heatClass(value: number) {
   return "";
 }
 
-function externalHTTPHref(value?: string) {
-  try {
-    const parsed = new URL((value || "").trim());
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return parsed.href;
-  } catch {
-    return "";
-  }
-}
-
 function scoreColor(score: number) {
   if (score >= 90) return "var(--green)";
   if (score >= 75) return "var(--blue)";
@@ -1401,6 +1395,7 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
           <col className="model-col-price" />
           <col className="model-col-score" />
           <col className="model-col-trend" />
+          <col className="model-col-action" />
         </colgroup>
         <thead>
           <tr>
@@ -1412,6 +1407,7 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
             <th>最便宜</th>
             <th>平均评分</th>
             <th>近30天趋势</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -1465,10 +1461,11 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
                   </td>
                   <td><ScoreRing value={row.avgScore} /></td>
                   <td className="model-trend-cell tk-trend-cell"><TrendBars values={row.trend} maxWidth="142px" /></td>
+                  <td className="channel-action-cell"><OfficialRegisterAction channel={modelActionChannel(row)} /></td>
                 </tr>
                 {open ? (
                   <tr className="mrow-detail">
-                    <td colSpan={8}>
+                    <td colSpan={9}>
                       <div className="det-wrap">
                         <div className="det-h">
                           品牌监控明细
@@ -1521,6 +1518,27 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
       </table>
     </div>
   );
+}
+
+function OfficialRegisterAction({ channel }: { channel?: PublicChannel | null }) {
+  const href = channel ? officialExperienceHref(channel) : "";
+  if (!href) return <span className="channel-register-empty">-</span>;
+  return (
+    <a
+      className="channel-register-link"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="新标签页打开官网注册入口"
+      onClick={(event) => event.stopPropagation()}
+    >
+      官网
+    </a>
+  );
+}
+
+function modelActionChannel(row: ModelRow) {
+  return row.bestLatency || row.cheapest || row.channels[0] || null;
 }
 
 function publicMonitorModelsFromConfig(items?: MonitorModelConfig[]): CoreMonitorModel[] {

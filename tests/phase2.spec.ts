@@ -5,6 +5,7 @@ type PublicChannel = {
   publicSlug: string;
   name: string;
   provider: string;
+  introTitle?: string;
   model: string;
   status: string;
 };
@@ -60,6 +61,11 @@ test("phase 2 public pages support filters and deep links", async ({ page, reque
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "监控总览" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /通道明细看板/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "操作" })).toBeVisible();
+  const officialRegisterLink = page.getByRole("link", { name: "官网" }).first();
+  await expect(officialRegisterLink).toBeVisible();
+  await expect(officialRegisterLink).toHaveAttribute("href", /^https:\/\//);
+  await expect(officialRegisterLink).toHaveAttribute("target", "_blank");
   await page.getByPlaceholder("搜索服务商 / 模型…").fill(channel.name);
   await expect(page.getByRole("heading", { name: /通道明细看板\s+1 个中转站/ })).toBeVisible();
   await expect(page.locator("tbody tr").filter({ hasText: channel.provider }).first()).toBeVisible();
@@ -68,7 +74,7 @@ test("phase 2 public pages support filters and deep links", async ({ page, reque
 
   await page.goto(`/channels/${channel.id}`);
   await page.waitForURL(`**/channels/${channel.publicSlug}`);
-  await expect(page.getByText(`${channel.name} 官方介绍`)).toBeVisible();
+  await expect(page.getByText(channel.introTitle || `${channel.provider} 官方介绍`)).toBeVisible();
   await expect(page.getByText("综合健康指数 · TokHub Index")).toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(channel.name) })).toBeVisible();
   await expect(page.getByText(/基础监控/).first()).toBeVisible();
