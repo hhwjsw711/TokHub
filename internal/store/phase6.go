@@ -848,6 +848,7 @@ func defaultFeaturedRecommendPicks() []RecommendPick {
 			Score:           item.score,
 			Mark:            providerMark(item.provider),
 			Trend:           singlePointTrend(item.score),
+			TrendBuckets:    singlePointTrendBuckets(item.score),
 		}
 		out = append(out, RecommendPick{
 			ID:        "rcp_default_" + item.key,

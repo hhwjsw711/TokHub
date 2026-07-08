@@ -359,7 +359,14 @@ export type PublicChannel = {
   errorType?: string;
   lastProbeAt: string;
   trend: number[];
+  trendBuckets?: TrendBucket[];
   mark: string;
+};
+
+export type TrendBucket = {
+  key: string;
+  label: string;
+  value: number | null;
 };
 
 export type ChannelDiagnosis = {

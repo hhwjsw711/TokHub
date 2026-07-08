@@ -42,14 +42,16 @@ JSON 成功响应直接返回业务对象。错误响应统一为：
 
 ```bash
 curl http://localhost:8080/api/public/overview
-curl "http://localhost:8080/api/public/channels?dimension=brand&status=healthy&page=1&pageSize=50"
+curl "http://localhost:8080/api/public/channels?dimension=brand&status=healthy&range=24&page=1&pageSize=50"
 curl http://localhost:8080/api/public/channels/ch_openai_gpt4o
 curl "http://localhost:8080/api/public/channels/ch_openai_gpt4o/series?days=7"
-curl http://localhost:8080/api/public/providers/rank
-curl http://localhost:8080/api/public/errors/summary
+curl "http://localhost:8080/api/public/providers/rank?range=24"
+curl "http://localhost:8080/api/public/errors/summary?range=24"
 curl http://localhost:8080/api/public/site-config
 curl http://localhost:8080/api/public/recommend
 ```
+
+`/api/public/channels`、`/api/public/providers/rank`、`/api/public/errors/summary` 支持 `range=24|7|30|all`。传入 range 时，列表的评分、可用率、成功率、延迟和 `trendBuckets` 会按该时间范围聚合；`status`、L1/L2/L3 仍代表最新探测状态。
 
 推荐点击埋点：
 

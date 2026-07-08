@@ -99,6 +99,7 @@ func publicChannelFilter(r *http.Request) store.ChannelFilter {
 		Provider: r.URL.Query().Get("provider"),
 		Status:   r.URL.Query().Get("status"),
 		Query:    r.URL.Query().Get("query"),
+		Range:    publicRangeValue(r),
 		Page:     page,
 		PageSize: pageSize,
 	}
@@ -151,7 +152,7 @@ func (s *Server) publicErrorsSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func publicRangeDays(r *http.Request) int {
-	value := strings.TrimSpace(r.URL.Query().Get("range"))
+	value := publicRangeValue(r)
 	if value == "" {
 		value = strings.TrimSpace(r.URL.Query().Get("days"))
 	}
@@ -163,7 +164,7 @@ func publicRangeDays(r *http.Request) int {
 	case "30":
 		return 30
 	case "all":
-		return 0
+		return -1
 	default:
 		days, _ := strconv.Atoi(value)
 		if days < 0 {
@@ -174,6 +175,14 @@ func publicRangeDays(r *http.Request) int {
 		}
 		return days
 	}
+}
+
+func publicRangeValue(r *http.Request) string {
+	value := strings.TrimSpace(r.URL.Query().Get("range"))
+	if value == "" {
+		value = strings.TrimSpace(r.URL.Query().Get("days"))
+	}
+	return strings.ToLower(value)
 }
 
 func (s *Server) statusStream(w http.ResponseWriter, r *http.Request) {

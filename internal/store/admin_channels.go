@@ -1126,6 +1126,7 @@ func scanAdminPlatformChannels(rows pgx.Rows) ([]AdminPlatformChannel, error) {
 		item.Diagnosis = channelDiagnosis(item.PublicChannel)
 		item.Mark = providerMark(item.Provider)
 		item.Trend = singlePointTrend(item.Score)
+		item.TrendBuckets = singlePointTrendBuckets(item.Score)
 		if disabledAt.Valid {
 			item.DisabledAt = &disabledAt.Time
 		}

@@ -18,6 +18,7 @@ type ChannelFilter struct {
 	Provider string
 	Status   string
 	Query    string
+	Range    string
 	Page     int
 	PageSize int
 }
@@ -40,43 +41,50 @@ type PublicOverview struct {
 }
 
 type PublicChannel struct {
-	ID              string     `json:"id"`
-	PublicSlug      string     `json:"publicSlug"`
-	Name            string     `json:"name"`
-	Provider        string     `json:"provider"`
-	Type            string     `json:"type"`
-	Model           string     `json:"model"`
-	UpstreamModel   string     `json:"upstreamModel"`
-	Endpoint        string     `json:"endpoint"`
-	OfficialSiteURL string     `json:"officialSiteUrl"`
-	IntroTitle      string     `json:"introTitle"`
-	IntroSummary    string     `json:"introSummary"`
-	IntroBody       string     `json:"introBody"`
-	IntroHighlights []string   `json:"introHighlights"`
-	LogoURL         string     `json:"logoUrl"`
-	IntroSourceURL  string     `json:"introSourceUrl"`
-	IntroUpdatedAt  *time.Time `json:"introUpdatedAt,omitempty"`
-	Status          string     `json:"status"`
-	StatusLabel     string     `json:"statusLabel"`
-	Diagnosis       Diagnosis  `json:"diagnosis"`
-	Score           int        `json:"score"`
-	Uptime24h       float64    `json:"uptime24h"`
-	SuccessRate     float64    `json:"successRate"`
-	LatencyP95Ms    int        `json:"latencyP95Ms"`
-	L1Status        string     `json:"l1Status"`
-	L2Status        string     `json:"l2Status"`
-	L3Status        string     `json:"l3Status"`
-	L1LatencyMs     int        `json:"l1LatencyMs"`
-	L2LatencyMs     int        `json:"l2LatencyMs"`
-	L3LatencyMs     int        `json:"l3LatencyMs"`
-	TokensUsed      int        `json:"tokensUsed"`
-	CostUSD         float64    `json:"costUsd"`
-	InputPerMTok    float64    `json:"inputPerMtok"`
-	OutputPerMTok   float64    `json:"outputPerMtok"`
-	ErrorType       string     `json:"errorType,omitempty"`
-	LastProbeAt     time.Time  `json:"lastProbeAt"`
-	Trend           []int      `json:"trend"`
-	Mark            string     `json:"mark"`
+	ID              string        `json:"id"`
+	PublicSlug      string        `json:"publicSlug"`
+	Name            string        `json:"name"`
+	Provider        string        `json:"provider"`
+	Type            string        `json:"type"`
+	Model           string        `json:"model"`
+	UpstreamModel   string        `json:"upstreamModel"`
+	Endpoint        string        `json:"endpoint"`
+	OfficialSiteURL string        `json:"officialSiteUrl"`
+	IntroTitle      string        `json:"introTitle"`
+	IntroSummary    string        `json:"introSummary"`
+	IntroBody       string        `json:"introBody"`
+	IntroHighlights []string      `json:"introHighlights"`
+	LogoURL         string        `json:"logoUrl"`
+	IntroSourceURL  string        `json:"introSourceUrl"`
+	IntroUpdatedAt  *time.Time    `json:"introUpdatedAt,omitempty"`
+	Status          string        `json:"status"`
+	StatusLabel     string        `json:"statusLabel"`
+	Diagnosis       Diagnosis     `json:"diagnosis"`
+	Score           int           `json:"score"`
+	Uptime24h       float64       `json:"uptime24h"`
+	SuccessRate     float64       `json:"successRate"`
+	LatencyP95Ms    int           `json:"latencyP95Ms"`
+	L1Status        string        `json:"l1Status"`
+	L2Status        string        `json:"l2Status"`
+	L3Status        string        `json:"l3Status"`
+	L1LatencyMs     int           `json:"l1LatencyMs"`
+	L2LatencyMs     int           `json:"l2LatencyMs"`
+	L3LatencyMs     int           `json:"l3LatencyMs"`
+	TokensUsed      int           `json:"tokensUsed"`
+	CostUSD         float64       `json:"costUsd"`
+	InputPerMTok    float64       `json:"inputPerMtok"`
+	OutputPerMTok   float64       `json:"outputPerMtok"`
+	ErrorType       string        `json:"errorType,omitempty"`
+	LastProbeAt     time.Time     `json:"lastProbeAt"`
+	Trend           []int         `json:"trend"`
+	TrendBuckets    []TrendBucket `json:"trendBuckets"`
+	Mark            string        `json:"mark"`
+}
+
+type TrendBucket struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Value *int   `json:"value"`
 }
 
 type Diagnosis struct {
@@ -236,6 +244,7 @@ func (r *Repository) PublicOverview(ctx context.Context) (PublicOverview, error)
 
 func (r *Repository) PublicChannels(ctx context.Context, filter ChannelFilter) (PublicChannelList, error) {
 	filter = normalizeChannelFilter(filter)
+	trendRange := normalizePublicChannelRange(filter.Range)
 	where, args := channelWhere(filter)
 
 	var total int
@@ -245,7 +254,11 @@ func (r *Repository) PublicChannels(ctx context.Context, filter ChannelFilter) (
 	}
 
 	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
-	query := publicChannelSQL(`where `+strings.Join(where, " and ")+" order by c.score desc, c.name asc limit $%d offset $%d", len(args)-1, len(args))
+	orderScore := "c.score"
+	if trendRange.active {
+		orderScore = "coalesce(rs.score,c.score)"
+	}
+	query := publicChannelSQLForRange(`where `+strings.Join(where, " and ")+" order by "+orderScore+" desc, c.name asc limit $%d offset $%d", len(args)-1, len(args), trendRange)
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return PublicChannelList{}, err
@@ -417,7 +430,7 @@ func (r *Repository) PublicProviderRank(ctx context.Context) ([]ProviderRank, er
 }
 
 func (r *Repository) PublicProviderRankForRange(ctx context.Context, days int) ([]ProviderRank, error) {
-	if days <= 0 {
+	if days == 0 {
 		return r.publicProviderRankFromLatestSnapshots(ctx)
 	}
 	rows, err := r.db.Query(ctx, `
@@ -444,7 +457,7 @@ func (r *Repository) PublicProviderRankForRange(ctx context.Context, days int) (
 			select * from channel_status_snapshots ss where ss.channel_id=c.id order by sampled_at desc limit 1
 		) s on true
 		left join probe_results pr on pr.channel_id=c.id
-			and pr.created_at >= now() - ($1::int * interval '1 day')
+			and ($1::int < 0 or pr.created_at >= now() - ($1::int * interval '1 day'))
 			and pr.layer='l3'
 		where `+publicChannelWhereClause("c")+`
 		group by c.provider
@@ -687,21 +700,168 @@ func baselineMetrics(id string, status string, score int) baseline {
 	return out
 }
 
+type publicChannelRange struct {
+	key    string
+	days   int
+	active bool
+	hourly bool
+	all    bool
+}
+
+func normalizePublicChannelRange(value string) publicChannelRange {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "24", "1":
+		return publicChannelRange{key: "24", days: 1, active: true, hourly: true}
+	case "7":
+		return publicChannelRange{key: "7", days: 7, active: true}
+	case "30":
+		return publicChannelRange{key: "30", days: 30, active: true}
+	case "all":
+		return publicChannelRange{key: "all", active: true, all: true}
+	case "":
+		return publicChannelRange{}
+	default:
+		return publicChannelRange{}
+	}
+}
+
+func (r publicChannelRange) snapshotPredicate(alias string) string {
+	if r.all {
+		return "true"
+	}
+	if r.hourly {
+		return fmt.Sprintf("%s.sampled_at >= date_trunc('hour', now()) - interval '23 hours' and %s.sampled_at < date_trunc('hour', now()) + interval '1 hour'", alias, alias)
+	}
+	lookbackDays := r.days - 1
+	if lookbackDays < 0 {
+		lookbackDays = 0
+	}
+	return fmt.Sprintf("%s.sampled_at >= current_date - (%d * interval '1 day') and %s.sampled_at < current_date + interval '1 day'", alias, lookbackDays, alias)
+}
+
+func (r publicChannelRange) metricsJoinSQL() string {
+	if !r.active {
+		return ""
+	}
+	return fmt.Sprintf(`
+		left join lateral (
+			select
+				round(avg(ss.score))::int as score,
+				round(avg(ss.uptime_24h)::numeric,1)::float8 as uptime_24h,
+				round(avg(ss.success_rate)::numeric,1)::float8 as success_rate,
+				coalesce(round((percentile_cont(0.95) within group (order by nullif(ss.latency_p95_ms,0)))::numeric)::int,0) as latency_p95_ms
+			from channel_status_snapshots ss
+			where ss.channel_id=c.id and %s
+		) rs on true
+	`, r.snapshotPredicate("ss"))
+}
+
+func (r publicChannelRange) trendBucketsJoinSQL() string {
+	if !r.active {
+		return `left join lateral (select '[]'::jsonb as trend_buckets) tb on true`
+	}
+	if r.all {
+		return `
+		left join lateral (
+			with ranked as (
+				select ntile(30) over (order by sampled_at asc) as bucket_number,sampled_at,score
+				from channel_status_snapshots
+				where channel_id=c.id
+			),
+			agg as (
+				select bucket_number,min(sampled_at) as first_at,max(sampled_at) as last_at,avg(score) as value
+				from ranked
+				group by bucket_number
+			)
+			select coalesce(jsonb_agg(jsonb_build_object(
+				'key', bucket_number::text,
+				'label', case when first_at::date=last_at::date then to_char(first_at,'MM-DD') else to_char(first_at,'MM-DD') || '/' || to_char(last_at,'MM-DD') end,
+				'value', round(value)::int
+			) order by bucket_number),'[]'::jsonb) as trend_buckets
+			from agg
+		) tb on true
+		`
+	}
+	if r.hourly {
+		return `
+		left join lateral (
+			with buckets as (
+				select generate_series(date_trunc('hour', now()) - interval '23 hours', date_trunc('hour', now()), interval '1 hour') as bucket_start
+			),
+			agg as (
+				select date_trunc('hour', sampled_at) as bucket_start,avg(score) as value
+				from channel_status_snapshots
+				where channel_id=c.id and sampled_at >= date_trunc('hour', now()) - interval '23 hours' and sampled_at < date_trunc('hour', now()) + interval '1 hour'
+				group by 1
+			)
+			select jsonb_agg(jsonb_build_object(
+				'key', to_char(b.bucket_start at time zone 'UTC','YYYY-MM-DD"T"HH24:00:00"Z"'),
+				'label', to_char(b.bucket_start,'HH24:00'),
+				'value', case when agg.value is null then null else round(agg.value)::int end
+			) order by b.bucket_start) as trend_buckets
+			from buckets b
+			left join agg on agg.bucket_start=b.bucket_start
+		) tb on true
+		`
+	}
+	lookbackDays := r.days - 1
+	if lookbackDays < 0 {
+		lookbackDays = 0
+	}
+	return fmt.Sprintf(`
+		left join lateral (
+			with buckets as (
+				select gs::date as bucket_start
+				from generate_series(current_date - (%d * interval '1 day'), current_date, interval '1 day') gs
+			),
+			agg as (
+				select sampled_at::date as bucket_start,avg(score) as value
+				from channel_status_snapshots
+				where channel_id=c.id and sampled_at >= current_date - (%d * interval '1 day') and sampled_at < current_date + interval '1 day'
+				group by 1
+			)
+			select jsonb_agg(jsonb_build_object(
+				'key', to_char(b.bucket_start,'YYYY-MM-DD'),
+				'label', to_char(b.bucket_start,'MM-DD'),
+				'value', case when agg.value is null then null else round(agg.value)::int end
+			) order by b.bucket_start) as trend_buckets
+			from buckets b
+			left join agg on agg.bucket_start=b.bucket_start
+		) tb on true
+	`, lookbackDays, lookbackDays)
+}
+
 func publicChannelSQL(tail string, limitArg int, offsetArg int) string {
-	base := `
-		select c.id,coalesce(c.public_slug,''),c.name,c.provider,c.type,c.model,c.upstream_model,c.endpoint,coalesce(c.official_site_url,''),c.status,c.score,
+	return publicChannelSQLForRange(tail, limitArg, offsetArg, publicChannelRange{})
+}
+
+func publicChannelSQLForRange(tail string, limitArg int, offsetArg int, trendRange publicChannelRange) string {
+	scoreExpr := "c.score"
+	uptimeExpr := "coalesce(s.uptime_24h,0)"
+	successExpr := "coalesce(s.success_rate,0)"
+	latencyExpr := "coalesce(s.latency_p95_ms,0)"
+	if trendRange.active {
+		scoreExpr = "coalesce(rs.score,c.score)"
+		uptimeExpr = "coalesce(rs.uptime_24h,s.uptime_24h,0)"
+		successExpr = "coalesce(rs.success_rate,s.success_rate,0)"
+		latencyExpr = "coalesce(rs.latency_p95_ms,s.latency_p95_ms,0)"
+	}
+	base := fmt.Sprintf(`
+		select c.id,coalesce(c.public_slug,''),c.name,c.provider,c.type,c.model,c.upstream_model,c.endpoint,coalesce(c.official_site_url,''),c.status,%s,
 			coalesce(c.intro_title,''),coalesce(c.intro_summary,''),coalesce(c.intro_body,''),coalesce(c.intro_highlights,'[]'::jsonb),
 			coalesce(c.logo_url,''),coalesce(c.intro_source_url,''),c.intro_updated_at,
-			coalesce(s.uptime_24h,0),coalesce(s.success_rate,0),coalesce(s.latency_p95_ms,0),
+			%s,%s,%s,
 			coalesce(s.l1_status,'na'),coalesce(s.l2_status,'na'),coalesce(s.l3_status,'na'),
 			coalesce(s.l1_latency_ms,0),coalesce(s.l2_latency_ms,0),coalesce(s.l3_latency_ms,0),
 			coalesce(s.tokens_used,0),coalesce(s.cost_usd,0),coalesce(s.error_type,''),coalesce(s.sampled_at,c.updated_at),c.updated_at,
 			coalesce(mp.input_per_mtok,0),coalesce(mp.output_per_mtok,0),
-			coalesce(t.trend,'[]'::jsonb)
+			coalesce(t.trend,'[]'::jsonb),coalesce(tb.trend_buckets,'[]'::jsonb)
 		from channels c
 		left join lateral (
 			select * from channel_status_snapshots ss where ss.channel_id=c.id order by sampled_at desc limit 1
 		) s on true
+		%s
 		left join lateral (
 			select input_per_mtok,output_per_mtok from model_prices where channel_id=c.id order by effective_at desc limit 1
 		) mp on true
@@ -715,7 +875,8 @@ func publicChannelSQL(tail string, limitArg int, offsetArg int) string {
 				limit 18
 			) tr
 		) t on true
-		`
+		%s
+		`, scoreExpr, uptimeExpr, successExpr, latencyExpr, trendRange.metricsJoinSQL(), trendRange.trendBucketsJoinSQL())
 	if limitArg > 0 && offsetArg > 0 {
 		return base + fmt.Sprintf(tail, limitArg, offsetArg)
 	}
@@ -731,10 +892,11 @@ func scanPublicChannels(rows pgx.Rows) ([]PublicChannel, error) {
 		var introUpdatedAt sql.NullTime
 		var introHighlightsRaw []byte
 		var trendRaw []byte
+		var trendBucketsRaw []byte
 		if err := rows.Scan(&ch.ID, &ch.PublicSlug, &ch.Name, &ch.Provider, &ch.Type, &ch.Model, &ch.UpstreamModel, &ch.Endpoint, &ch.OfficialSiteURL, &ch.Status, &ch.Score,
 			&ch.IntroTitle, &ch.IntroSummary, &ch.IntroBody, &introHighlightsRaw, &ch.LogoURL, &ch.IntroSourceURL, &introUpdatedAt,
 			&ch.Uptime24h, &ch.SuccessRate, &ch.LatencyP95Ms, &ch.L1Status, &ch.L2Status, &ch.L3Status, &ch.L1LatencyMs, &ch.L2LatencyMs, &ch.L3LatencyMs,
-			&ch.TokensUsed, &cost, &ch.ErrorType, &ch.LastProbeAt, &updatedAt, &ch.InputPerMTok, &ch.OutputPerMTok, &trendRaw); err != nil {
+			&ch.TokensUsed, &cost, &ch.ErrorType, &ch.LastProbeAt, &updatedAt, &ch.InputPerMTok, &ch.OutputPerMTok, &trendRaw, &trendBucketsRaw); err != nil {
 			return nil, err
 		}
 		ch.IntroHighlights = parseStringSliceJSON(introHighlightsRaw)
@@ -746,6 +908,7 @@ func scanPublicChannels(rows pgx.Rows) ([]PublicChannel, error) {
 		ch.Diagnosis = channelDiagnosis(ch)
 		ch.Mark = providerMark(ch.Provider)
 		ch.Trend = parseTrend(trendRaw)
+		ch.TrendBuckets = parseTrendBuckets(trendBucketsRaw)
 		out = append(out, ch)
 	}
 	return out, rows.Err()
@@ -760,6 +923,26 @@ func parseTrend(raw []byte) []int {
 		return []int{}
 	}
 	return values
+}
+
+func parseTrendBuckets(raw []byte) []TrendBucket {
+	if len(raw) == 0 {
+		return []TrendBucket{}
+	}
+	var values []TrendBucket
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return []TrendBucket{}
+	}
+	out := make([]TrendBucket, 0, len(values))
+	for _, value := range values {
+		value.Key = strings.TrimSpace(value.Key)
+		value.Label = strings.TrimSpace(value.Label)
+		if value.Key == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func parseStringSliceJSON(raw []byte) []string {
@@ -785,6 +968,14 @@ func singlePointTrend(score int) []int {
 		return []int{}
 	}
 	return []int{score}
+}
+
+func singlePointTrendBuckets(score int) []TrendBucket {
+	if score <= 0 {
+		return []TrendBucket{}
+	}
+	value := score
+	return []TrendBucket{{Key: "current", Label: "当前", Value: &value}}
 }
 
 func publicChannelPredicates(alias string) []string {

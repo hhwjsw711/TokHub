@@ -725,6 +725,7 @@ func scanPrivateChannels(rows pgx.Rows) ([]PrivateChannel, error) {
 		item.Diagnosis = channelDiagnosis(item.PublicChannel)
 		item.Mark = providerMark(item.Provider)
 		item.Trend = singlePointTrend(item.Score)
+		item.TrendBuckets = singlePointTrendBuckets(item.Score)
 		item.QuotaExhausted = item.ProbeDaily > 0 && item.ProbesUsedToday >= item.ProbeDaily
 		out = append(out, item)
 	}
