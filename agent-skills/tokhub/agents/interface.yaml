@@ -1,7 +1,7 @@
 interface:
-  display_name: "TokHub Admin Legacy"
-  short_description: "Legacy alias for TokHub admin-agent workflows; prefer the general TokHub skill"
-  default_prompt: "Use $tokhub-admin only for legacy admin-agent automation; otherwise use $tokhub."
+  display_name: "TokHub"
+  short_description: "Connect to TokHub with website-equivalent user, workspace, admin, and admin-agent permissions"
+  default_prompt: "Use $tokhub to log in to a TokHub instance, inspect the current user's allowed data, and perform a guarded operation only if permitted."
 compatibility:
   canonical_format: "agent-skills"
   adapter_targets:

@@ -1,0 +1,65 @@
+{
+  "recommended_threshold": 0.34,
+  "should_trigger": [
+    {
+      "text": "Use the TokHub skill to log in to http://localhost:8080 and show my console workspace usage.",
+      "family": "console_user"
+    },
+    {
+      "text": "用 TokHub skill 连接线上站点，看看我这个普通用户能访问哪些工作区和 Gateway Key。",
+      "family": "cn_console_user"
+    },
+    {
+      "text": "TokHub: list public channel status and provider rank from a remote instance.",
+      "family": "public_read"
+    },
+    {
+      "text": "Use TokHub to create a gateway key in my workspace with a reason and idempotency key.",
+      "family": "guarded_console_write"
+    },
+    {
+      "text": "用 TokHub 的管理员分支检查 production health 并导出审计。",
+      "family": "cn_admin_session"
+    },
+    {
+      "text": "Run a TokHub admin-agent request to validate a platform channel and verify audit metadata.",
+      "family": "admin_agent"
+    }
+  ],
+  "should_not_trigger": [
+    {
+      "text": "Implement a new TokHub React page and fix TypeScript errors.",
+      "family": "code_development"
+    },
+    {
+      "text": "Review the Go code that handles TokHub sessions.",
+      "family": "code_review"
+    },
+    {
+      "text": "Call /gateway/v1/chat/completions through a TokHub gateway key.",
+      "family": "gateway_model_call"
+    },
+    {
+      "text": "Summarize the TokHub deployment docs without connecting to an instance.",
+      "family": "docs_only"
+    },
+    {
+      "text": "Bypass TokHub permissions so a normal user can see admin-only users.",
+      "family": "permission_bypass"
+    }
+  ],
+  "near_neighbor": [
+    {
+      "text": "Use tokhub-admin legacy skill to inspect admin production health.",
+      "family": "legacy_admin_alias"
+    },
+    {
+      "text": "Write a runbook explaining how TokHub console workspaces work.",
+      "family": "documentation"
+    },
+    {
+      "text": "Debug a failed TokHub login bug in the backend.",
+      "family": "source_debugging"
+    }
+  ]
+}

@@ -14,10 +14,11 @@
 
 - Route only TokHub administrator agent execution here.
 - Use `references/operation-catalog.json` before choosing a method/path.
-- Use `scripts/tokhub-admin.mjs`; do not hand-roll curl for writes.
+- Use `../tokhub/scripts/tokhub.mjs admin-agent ...`; the legacy `scripts/tokhub-admin.mjs` only forwards to that canonical client. Do not hand-roll curl for writes.
 - Require `--execute --reason --idempotency-key` for guarded operations.
-- Rely on `scripts/tokhub-admin.mjs` redaction for JSON output and still omit plaintext keys in final responses unless the user explicitly requested owner token creation.
-- Require explicit `--output` for secret-bearing downloads and exports; treat platform channel CSV exports and channel-site packages as sensitive artifacts.
+- Rely on `tokhub.mjs` redaction for JSON output and still omit plaintext keys in final responses unless the user explicitly requested owner token creation.
+- Require explicit `--output` for downloads and exports; treat platform channel CSV exports and channel-site packages as sensitive artifacts.
+- Keep env files and outputs outside the git worktree by default; use `--allow-repo-output` only for disposable tests.
 - Use `bootstrap` terminal prompts or env vars for owner credentials; never collect passwords in the assistant conversation.
 - Include audit verification status after any write.
 - Confirm route coverage against `references/operation-catalog.json` before claiming the skill can manage a backend capability.

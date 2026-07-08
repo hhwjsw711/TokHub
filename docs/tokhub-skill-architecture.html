@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TokHub 通用 Skill 架构与功能说明</title>
+  <style>
+    :root {
+      --ink: #18212f;
+      --muted: #667085;
+      --line: #d9dee8;
+      --paper: #ffffff;
+      --soft: #f5f7fb;
+      --blue: #1f66d1;
+      --green: #13835f;
+      --amber: #a15c07;
+      --red: #b42318;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #eef2f7;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+      font-size: 15px;
+    }
+
+    main {
+      width: min(1060px, calc(100% - 40px));
+      margin: 28px auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      box-shadow: 0 20px 60px rgba(16, 24, 40, 0.08);
+    }
+
+    header {
+      padding: 56px 64px 40px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 760px;
+      margin: 18px 0 0;
+      color: #3b4556;
+      font-size: 17px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 5px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    section {
+      padding: 34px 64px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section:last-child {
+      border-bottom: 0;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+      overflow-wrap: anywhere;
+    }
+
+    ul, ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+      background: #eef3fb;
+      color: #133b78;
+      border-radius: 4px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 14px 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: #101828;
+      color: #f8fafc;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      border-radius: 0;
+      white-space: inherit;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    th code,
+    td code {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    th {
+      background: #f7f9fc;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fff;
+    }
+
+    .security-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card h3 {
+      margin-top: 0;
+      font-size: 16px;
+    }
+
+    .note {
+      border-left: 4px solid var(--blue);
+      background: #f3f7ff;
+      padding: 14px 16px;
+      margin: 14px 0 0;
+    }
+
+    .warn {
+      border-left-color: var(--amber);
+      background: #fff7ed;
+    }
+
+    .success {
+      border-left-color: var(--green);
+      background: #ecfdf3;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: #fff1f0;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 26px 1fr 26px 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+      min-height: 114px;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--blue);
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--soft);
+    }
+
+    .kpi b {
+      display: block;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .kpi span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        font-size: 13px;
+      }
+
+      main {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        box-shadow: none;
+      }
+
+      header, section {
+        padding-left: 36px;
+        padding-right: 36px;
+      }
+
+      section {
+        break-inside: avoid;
+      }
+
+      .card, .step, .kpi, table, pre {
+        break-inside: avoid;
+      }
+    }
+
+    @media (max-width: 820px) {
+      main {
+        width: 100%;
+        margin: 0;
+        border-left: 0;
+        border-right: 0;
+      }
+
+      header, section {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .grid, .kpis {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        min-height: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">TokHub Skill Architecture</p>
+      <h1>TokHub 通用 Skill 架构与功能说明</h1>
+      <p class="subtitle">这份文档说明新版 <code>tokhub</code> skill 的定位、功能范围、运行原理、权限模型和安全边界。它把原来的 <code>tokhub-admin</code> 升级为面向所有用户的通用入口，同时保留高权限 admin-agent 分支。</p>
+      <div class="meta">
+        <span class="pill">版本：0.1.0</span>
+        <span class="pill">日期：2026-07-08</span>
+        <span class="pill">主入口：agent-skills/tokhub</span>
+        <span class="pill">兼容入口：agent-skills/tokhub-admin</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>1. 一句话定位</h2>
+      <p>新版 <code>tokhub</code> skill 是一个本地 agent 到 TokHub 实例的安全连接层。用户下载或启用后，可以在本机终端登录任意本地或远程 TokHub 站点，然后让 agent 按这个账号在网站里已有的权限读取、查询、管理对应的数据。</p>
+      <div class="note">
+        <p><strong>核心原则：</strong>skill 不创建新的权限体系，不绕过网站权限。它只把网站里已经存在的登录态、工作区角色、平台管理员角色和 admin-agent token 变成 agent 可调用的本地执行通道。</p>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><b>1 个入口</b><span><code>tokhub</code> 面向普通用户和管理员</span></div>
+        <div class="kpi"><b>6 类权限面</b><span>public、status-api、user、console、admin-session、admin-agent</span></div>
+        <div class="kpi"><b>83 个 session 操作</b><span>覆盖公开页、个人、工作区和部分管理员会话接口</span></div>
+        <div class="kpi"><b>5 类 admin scope</b><span>read、write、dangerous、secrets、export</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 设计目标</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>面向所有用户</h3>
+          <p>普通用户可以登录自己的 TokHub 账号，查看自己的工作区、私有通道、Gateway Key、用量、告警、审计和事件数据。</p>
+        </div>
+        <div class="card">
+          <h3>保留管理员能力</h3>
+          <p>平台 owner 或 admin 仍然可以访问后台管理模块。原 <code>tokhub-admin</code> 的能力被收进 <code>admin-agent</code> 高权限分支。</p>
+        </div>
+        <div class="card">
+          <h3>权限完全等价网站</h3>
+          <p>用户能通过公开页或控制台看到什么，skill 才能看到什么。服务端的 401 和 403 是最终权限结果。</p>
+        </div>
+        <div class="card">
+          <h3>本地凭证不进聊天</h3>
+          <p>密码、Cookie、CSRF、Site Key、Gateway Key、provider key 和 admin-agent token 都只在本机终端或本地文件中处理。</p>
+        </div>
+        <div class="card">
+          <h3>写操作必须留痕</h3>
+          <p>写入、删除、导出、下载、批量、重置、撤销、密钥相关操作都需要 <code>--execute</code>、原因和幂等键。</p>
+        </div>
+        <div class="card">
+          <h3>保守的输出策略</h3>
+          <p>所有 JSON 输出递归脱敏。导出和下载必须落文件，默认禁止写入当前 git worktree，避免误提交凭证材料。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. 组件架构</h2>
+      <p>新版 skill 由一个轻入口、多个参考合同、一个确定性客户端脚本和两套操作目录组成。入口负责触发和边界说明，脚本负责真实执行，参考文件负责在执行前约束 agent 的判断。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>组件</th>
+            <th>位置</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Skill 入口</td>
+            <td><code>agent-skills/tokhub/SKILL.md</code></td>
+            <td>定义何时使用、何时拒绝、执行流程和输出合同。</td>
+          </tr>
+          <tr>
+            <td>确定性客户端</td>
+            <td><code>scripts/tokhub.mjs</code></td>
+            <td>完成登录、profile 管理、请求执行、写操作 guard、admin-agent 分支、脱敏和导出保护。</td>
+          </tr>
+          <tr>
+            <td>权限模型</td>
+            <td><code>references/permission-model.md</code></td>
+            <td>说明六类 auth mode、工作区角色、受保护操作和 secret 处理规则。</td>
+          </tr>
+          <tr>
+            <td>登录合同</td>
+            <td><code>references/session-auth-contract.md</code></td>
+            <td>说明 CSRF、Cookie、profile 文件、本地凭证和 URL 归一化规则。</td>
+          </tr>
+          <tr>
+            <td>操作目录</td>
+            <td><code>references/operation-catalog.json</code></td>
+            <td>列出普通 session 模式可识别的 public、me、console、admin-session 操作。</td>
+          </tr>
+          <tr>
+            <td>高权限目录</td>
+            <td><code>references/admin-agent-operation-catalog.json</code></td>
+            <td>列出 admin-agent 分支下的后台操作、scope、risk 和 guard 要求。</td>
+          </tr>
+          <tr>
+            <td>兼容入口</td>
+            <td><code>agent-skills/tokhub-admin</code></td>
+            <td>保留旧 skill 名称，脚本只转发到 <code>tokhub.mjs admin-agent</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. 运行原理</h2>
+      <p>skill 的运行可以理解为三层：agent 意图层、本地执行层、TokHub 服务端权限层。agent 负责理解用户要做什么，本地脚本负责以可验证的方式发起请求，TokHub 服务端仍然负责最终鉴权和授权。</p>
+      <div class="flow">
+        <div class="step">
+          <strong>Agent 意图层</strong>
+          <p>判断是否是 TokHub 实例操作，读取权限合同和操作目录，确认是否需要登录、写操作授权或 admin-agent 分支。</p>
+        </div>
+        <div class="arrow">-&gt;</div>
+        <div class="step">
+          <strong>本地执行层</strong>
+          <p><code>tokhub.mjs</code> 处理登录态、CSRF、Cookie、Site Key、Bearer token、输出脱敏和本地文件保护。</p>
+        </div>
+        <div class="arrow">-&gt;</div>
+        <div class="step">
+          <strong>服务端权限层</strong>
+          <p>TokHub 后端按用户角色、工作区角色、Site Key scope 或 admin-agent scope 返回结果或拒绝。</p>
+        </div>
+      </div>
+
+      <h3>4.1 普通登录链路</h3>
+      <ol>
+        <li>用户提供 TokHub URL、用户名或邮箱，密码只在本机终端输入。</li>
+        <li>脚本请求 <code>GET /api/auth/csrf</code>，拿到 CSRF Cookie 和 token。</li>
+        <li>脚本提交 <code>POST /api/auth/login</code>，得到网站同款 session Cookie。</li>
+        <li>脚本请求 <code>GET /api/auth/me</code> 和 <code>/api/console/settings</code>，保存用户摘要和默认工作区。</li>
+        <li>profile 写入 <code>~/.tokhub/sessions/profile-name.json</code>，文件权限为 <code>0600</code>。</li>
+      </ol>
+
+      <h3>4.2 普通请求链路</h3>
+      <p>读请求直接带 Cookie 访问。写请求会自动带 CSRF。若服务端返回 <code>csrf_invalid</code>，脚本只刷新一次 CSRF 并重试同一个请求。</p>
+      <pre><code>node agent-skills/tokhub/scripts/tokhub.mjs request GET /api/console/settings --profile default
+node agent-skills/tokhub/scripts/tokhub.mjs request POST /api/console/gateway-keys \
+  --profile default --execute --reason "create workspace key" --idempotency-key "gwkey-20260708-001"</code></pre>
+
+      <h3>4.3 Open API 状态链路</h3>
+      <p><code>/v1/status/*</code> 不是匿名接口。脚本要求使用 <code>--site-key-env ENV_VAR</code>，从本地环境变量读取 Site Key，再通过 <code>X-Site-Key</code> 请求服务端。</p>
+
+      <h3>4.4 admin-agent 链路</h3>
+      <p>owner 可以用浏览器会话等价的账号密码创建短期 admin-agent token。之后机器执行使用 <code>TOKHUB_BASE_URL</code> 和 <code>TOKHUB_ADMIN_AGENT_TOKEN</code>，不再依赖浏览器 Cookie。</p>
+      <pre><code>node agent-skills/tokhub/scripts/tokhub.mjs admin-agent bootstrap \
+  --url https://www.tokhub.me --identifier owner@example.com --save-env ~/.tokhub/admin-agent.env
+
+source ~/.tokhub/admin-agent.env
+node agent-skills/tokhub/scripts/tokhub.mjs admin-agent preflight</code></pre>
+    </section>
+
+    <section>
+      <h2>5. 权限模型</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>接口面</th>
+            <th>凭证</th>
+            <th>权限边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>public</td>
+            <td><code>/api/public/*</code></td>
+            <td>无，或登录 profile</td>
+            <td>公开页面数据。</td>
+          </tr>
+          <tr>
+            <td>status-api</td>
+            <td><code>/v1/status/*</code></td>
+            <td>本地 Site Key 环境变量</td>
+            <td>Open API 站点授权范围内的数据。</td>
+          </tr>
+          <tr>
+            <td>user</td>
+            <td><code>/api/me/*</code></td>
+            <td>Cookie + CSRF</td>
+            <td>当前用户自己的资料、收藏和私有通道上下文。</td>
+          </tr>
+          <tr>
+            <td>console</td>
+            <td><code>/api/console/*</code></td>
+            <td>Cookie + CSRF + workspace</td>
+            <td>当前工作区成员身份。viewer 可读，operator 可操作，admin 可管理成员和设置。</td>
+          </tr>
+          <tr>
+            <td>admin-session</td>
+            <td><code>/api/admin/*</code></td>
+            <td>Cookie + CSRF + platform role</td>
+            <td>平台 owner 或 admin 通过网站会话访问后台。</td>
+          </tr>
+          <tr>
+            <td>admin-agent</td>
+            <td><code>/api/admin/*</code></td>
+            <td>Scoped Bearer token</td>
+            <td>高权限自动化。scope、reason、idempotency 和 audit 共同约束。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="warn">
+        <p><strong>权限判断不在 skill 里重造。</strong>skill 可以在本地提前阻止明显越界的请求，例如普通用户访问 <code>/api/admin/*</code>，但最终授权仍由 TokHub 服务端完成。服务端返回 403 时，agent 应报告权限不足，不应寻找绕过路径。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>6. 功能范围</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>命令</th>
+            <th>能力</th>
+            <th>典型用途</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>login</code></td>
+            <td>建立本地 profile</td>
+            <td>用户输入 URL、用户名和密码，完成账号授权。</td>
+          </tr>
+          <tr>
+            <td><code>whoami</code></td>
+            <td>查看当前用户和工作区</td>
+            <td>确认账号角色、平台管理员状态和当前 workspace。</td>
+          </tr>
+          <tr>
+            <td><code>preflight</code></td>
+            <td>健康检查和权限探测</td>
+            <td>执行任务前确认目标站点可访问、登录态有效、console 或 admin 面可用。</td>
+          </tr>
+          <tr>
+            <td><code>workspaces list/use</code></td>
+            <td>列出和切换工作区</td>
+            <td>普通用户或企业用户选择要操作的组织空间。</td>
+          </tr>
+          <tr>
+            <td><code>request</code></td>
+            <td>调用允许的 API 路径</td>
+            <td>查询公开数据、个人数据、工作区数据，或在有权限时执行后台 session 操作。</td>
+          </tr>
+          <tr>
+            <td><code>admin-agent bootstrap</code></td>
+            <td>创建短期 admin-agent token</td>
+            <td>owner 在本机创建机器执行凭证，保存到本地 env 文件。</td>
+          </tr>
+          <tr>
+            <td><code>admin-agent request</code></td>
+            <td>高权限后台自动化</td>
+            <td>生产健康检查、平台通道、用户、组织、审计、告警和导出等后台任务。</td>
+          </tr>
+          <tr>
+            <td><code>admin-agent audit-verify</code></td>
+            <td>审计验证</td>
+            <td>写操作后按 token id 或 idempotency key 查找 agent 审计记录。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>7. 安全机制</h2>
+      <div class="grid security-grid">
+        <div class="card">
+          <h3>路径边界</h3>
+          <p>只允许 <code>/api/public/*</code>、<code>/v1/status/*</code>、<code>/api/me/*</code>、<code>/api/console/*</code>、<code>/api/admin/*</code>。拒绝 <code>/gateway/v1/*</code>、反斜杠、控制字符和 dot segment。</p>
+        </div>
+        <div class="card">
+          <h3>凭证边界</h3>
+          <p>普通登录不读取 <code>TOKHUB_ADMIN_PASSWORD</code>。Site Key 只从环境变量读取。admin-agent token 只走本地 env。</p>
+        </div>
+        <div class="card">
+          <h3>CSRF 边界</h3>
+          <p>session 写请求必须带 <code>X-CSRF-Token</code>。admin-agent 只在 <code>/api/admin/*</code> 上用 Bearer token 绕过 CSRF，由 scope 和 audit 约束。</p>
+        </div>
+        <div class="card">
+          <h3>写操作 guard</h3>
+          <p>非读请求、导出和下载必须带 <code>--execute</code>、<code>--reason</code>、<code>--idempotency-key</code>。</p>
+        </div>
+        <div class="card">
+          <h3>输出保护</h3>
+          <p>JSON 递归脱敏，错误输出脱敏。导出和下载必须 <code>--output</code>，不直接打印到终端。</p>
+        </div>
+        <div class="card">
+          <h3>文件保护</h3>
+          <p>profile、env、导出和包文件使用 <code>0600</code>。默认不覆盖已有文件，默认不写当前 git worktree。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>8. 旧 tokhub-admin 的保留方式</h2>
+      <p><code>tokhub-admin</code> 现在是兼容入口，不再作为主 skill 演进。它的说明文件会引导用户优先使用 <code>tokhub</code>。旧脚本 <code>tokhub-admin.mjs</code> 也不再保留独立实现，只是把参数转发到：</p>
+      <pre><code>node agent-skills/tokhub/scripts/tokhub.mjs admin-agent COMMAND</code></pre>
+      <p>这样可以避免两套客户端逻辑长期分叉，也能让旧用户继续使用原来的入口名。</p>
+    </section>
+
+    <section>
+      <h2>9. 推荐执行流程</h2>
+      <ol>
+        <li>先确认任务是否属于 TokHub 实例操作，而不是源代码开发或文档总结。</li>
+        <li>读取登录合同和权限模型，判断需要 session、Site Key 还是 admin-agent。</li>
+        <li>用 <code>login</code>、<code>whoami</code> 或 <code>preflight</code> 确认当前身份。</li>
+        <li>读操作直接执行，写操作先要求用户提供明确意图、原因和幂等键。</li>
+        <li>导出和下载统一写到本地安全路径，不写仓库，不覆盖已有文件。</li>
+        <li>admin-agent 写操作后运行 <code>audit-verify</code>，把审计验证结果作为输出的一部分。</li>
+      </ol>
+      <div class="success">
+        <p><strong>最终效果：</strong>普通用户、工作区管理员、平台管理员和机器自动化可以共用一个 skill，但每条链路都有清晰的权限边界和执行守卫。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>10. 不做什么</h2>
+      <ul>
+        <li>不调用 <code>/gateway/v1/*</code> 模型推理接口。</li>
+        <li>不帮助普通用户读取 admin-only 数据。</li>
+        <li>不要求用户把密码、Cookie、token、Site Key 或 API key 粘贴到聊天中。</li>
+        <li>不把导出文件、channel-site 包或本地 profile 写进仓库。</li>
+        <li>不把 admin-agent token 链式扩散到 <code>/api/admin/agent-tokens</code> 管理接口。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

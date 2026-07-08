@@ -15,7 +15,7 @@
 
 ## Runtime Boundary
 
-The skill script performs network requests to `TOKHUB_BASE_URL` for agent requests, or to the base URL derived from `--admin-url` during local bootstrap. It does not read repository secrets, mutate local source files, or install packages. It redacts known plaintext key fields from JSON output, supports explicit multipart file upload for channel CSV import, and refuses to stream secret-bearing artifacts such as platform channel CSV exports or channel-site packages to the terminal.
+The legacy script forwards to `../tokhub/scripts/tokhub.mjs admin-agent`. The canonical client performs network requests to normalized `TOKHUB_BASE_URL` for agent requests, or to the base URL derived from `--admin-url` during local bootstrap. It does not read repository secrets, mutate local source files, or install packages. It redacts known plaintext key fields from JSON and error output, supports explicit multipart file upload for channel CSV import, refuses to stream exports/downloads to the terminal, and blocks credential-bearing output inside the current git worktree unless explicitly overridden for disposable test data.
 
 ## Permission Boundary
 

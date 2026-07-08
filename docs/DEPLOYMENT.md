@@ -24,7 +24,7 @@ TOKHUB_BASE_URL=http://localhost:8080 npm run test:smoke
 
 本地 `.env.example` 默认使用 `TOKHUB_SEED_MODE=prod`，只创建管理员、默认组织、站点配置和模型目录，不创建示例通道或推荐。只有在明确设置 `TOKHUB_SEED_MODE=demo` 或 `TOKHUB_SEED_MODE=test` 时，才会创建演示/测试数据；生产环境必须继续使用 `TOKHUB_SEED_MODE=prod` 和 `TOKHUB_UPSTREAM_MODE=real`。
 
-## Admin-Agent Token Bootstrap
+## TokHub Skill Login And Admin-Agent Bootstrap
 
 管理员 agent 通道由 `TOKHUB_ADMIN_AGENT_ENABLED` 控制：开发默认启用，生产示例默认关闭。创建一次性 token 需要 owner 浏览器会话等价的账号、密码、CSRF 和 Cookie 流程，可用脚本完成：
 
@@ -40,20 +40,35 @@ deploy/scripts/create-admin-agent-token.sh
 
 脚本默认只输出一次性明文 token。生产使用后应写入部署密钥系统或本机临时环境，不要提交到仓库。内部机器合同见 `docs/admin-agent-api.md`。
 
-如果使用仓库内配套的 Codex/AI skill 连接远程后台，可以让操作者只在本机终端输入后台地址、用户名和密码，由脚本换取短期 admin-agent token：
+如果使用仓库内配套的 Codex/AI skill 连接本地或远程 TokHub 实例，默认使用通用 `tokhub` skill。操作者只在本机终端输入站点地址、用户名和密码，skill 保存本机 session profile，并按网站里同一个账号的 public、console、admin 权限执行：
 
 ```bash
-node agent-skills/tokhub-admin/scripts/tokhub-admin.mjs bootstrap \
-  --admin-url https://www.tokhub.me/tokhub_admin \
+node agent-skills/tokhub/scripts/tokhub.mjs login \
+  --url https://www.tokhub.me \
+  --profile default \
+  --identifier <username-or-email>
+
+node agent-skills/tokhub/scripts/tokhub.mjs preflight --profile default
+node agent-skills/tokhub/scripts/tokhub.mjs workspaces list --profile default
+node agent-skills/tokhub/scripts/tokhub.mjs request GET /api/console/settings --profile default
+```
+
+本机 profile 默认保存在 `~/.tokhub/sessions/<profile>.json`，脚本会按 `0600` 权限写入，并默认拒绝把 profile、admin-agent env、导出文件或 channel-site 包写进当前 git worktree；只有一次性测试数据才使用 `--allow-repo-output` 或 `TOKHUB_ALLOW_REPO_OUTPUT=1`。不要把 profile、token、导出的 CSV 或包提交到仓库。
+
+owner/admin 需要长期或无浏览器的后台自动化时，可继续使用 `tokhub` skill 的 admin-agent 分支换取短期 bearer token：
+
+```bash
+node agent-skills/tokhub/scripts/tokhub.mjs admin-agent bootstrap \
+  --url https://www.tokhub.me \
   --identifier <owner-username-or-email> \
   --save-env ~/.tokhub-admin.env
 
 source ~/.tokhub-admin.env
-node agent-skills/tokhub-admin/scripts/tokhub-admin.mjs preflight
-node agent-skills/tokhub-admin/scripts/tokhub-admin.mjs request GET /api/admin/channels
+node agent-skills/tokhub/scripts/tokhub.mjs admin-agent preflight
+node agent-skills/tokhub/scripts/tokhub.mjs admin-agent request GET /api/admin/channels
 ```
 
-`~/.tokhub-admin.env` 只保存在本机并应保持 `0600` 权限；不要把该文件、token、导出的通道 CSV 或 channel-site 包提交到仓库。
+`~/.tokhub-admin.env` 只保存在本机并应保持 `0600` 权限。旧 `tokhub-admin` skill 仍保留为兼容入口，但新任务应优先使用 `tokhub`。
 
 ## 生产自托管注意事项
 

@@ -1,0 +1,56 @@
+{
+  "fallback_positive_concepts": ["tokhub_instance", "website_permissions", "public_operations"],
+  "positive_concepts": {
+    "tokhub_instance": {
+      "weight": 0.3,
+      "phrases": ["tokhub", "tokhub skill", "tokhub instance", "tokhub 站点", "连接 TokHub"]
+    },
+    "website_permissions": {
+      "weight": 0.3,
+      "phrases": ["login", "log in", "登录", "profile", "session", "权限", "workspace", "工作区", "console"]
+    },
+    "console_operations": {
+      "weight": 0.25,
+      "phrases": ["gateway key", "private channel", "usage", "alerts", "audit", "incidents", "用量", "告警", "审计", "事件"]
+    },
+    "public_operations": {
+      "weight": 0.25,
+      "phrases": ["public", "public status", "channel status", "provider rank", "remote instance", "公开", "公开监控", "服务商排行"]
+    },
+    "admin_operations": {
+      "weight": 0.25,
+      "phrases": ["admin", "owner", "管理员", "production health", "admin-agent", "platform channels", "平台通道"]
+    },
+    "safety_guard": {
+      "weight": 0.2,
+      "phrases": ["reason", "idempotency", "execute", "guarded", "scope", "幂等", "危险操作"]
+    }
+  },
+  "negative_concepts": {
+    "code_development": {
+      "weight": 0.65,
+      "exclusive": true,
+      "phrases": ["implement", "typescript", "react", "go code", "code review", "fix bug", "debug source", "debug", "backend", "login bug", "代码"]
+    },
+    "gateway_model_call": {
+      "weight": 0.6,
+      "exclusive": true,
+      "phrases": ["/gateway/v1", "chat completion", "model endpoint", "model inference", "模型调用"]
+    },
+    "docs_only": {
+      "weight": 0.45,
+      "exclusive": true,
+      "phrases": ["summarize docs", "documentation only", "wiki", "without connecting", "runbook", "explaining", "write a runbook", "只总结", "不执行"]
+    },
+    "permission_bypass": {
+      "weight": 0.8,
+      "exclusive": true,
+      "phrases": ["bypass permission", "bypass permissions", "bypass tokhub permissions", "admin-only", "normal user can see", "绕过权限", "普通用户看 admin", "ignore role"]
+    },
+    "legacy_admin_alias": {
+      "weight": 0.55,
+      "exclusive": true,
+      "phrases": ["legacy skill", "old tokhub-admin", "tokhub-admin legacy", "旧 tokhub-admin"]
+    }
+  }
+}

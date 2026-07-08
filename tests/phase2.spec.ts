@@ -1,10 +1,11 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Route } from "@playwright/test";
 
 type PublicChannel = {
   id: string;
   publicSlug: string;
   name: string;
   provider: string;
+  introTitle?: string;
   model: string;
   status: string;
 };
@@ -60,6 +61,11 @@ test("phase 2 public pages support filters and deep links", async ({ page, reque
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "监控总览" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /通道明细看板/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "操作" })).toBeVisible();
+  const officialRegisterLink = page.getByRole("link", { name: "官网" }).first();
+  await expect(officialRegisterLink).toBeVisible();
+  await expect(officialRegisterLink).toHaveAttribute("href", /^https:\/\//);
+  await expect(officialRegisterLink).toHaveAttribute("target", "_blank");
   await page.getByPlaceholder("搜索服务商 / 模型…").fill(channel.name);
   await expect(page.getByRole("heading", { name: /通道明细看板\s+1 个中转站/ })).toBeVisible();
   await expect(page.locator("tbody tr").filter({ hasText: channel.provider }).first()).toBeVisible();
@@ -68,11 +74,70 @@ test("phase 2 public pages support filters and deep links", async ({ page, reque
 
   await page.goto(`/channels/${channel.id}`);
   await page.waitForURL(`**/channels/${channel.publicSlug}`);
-  await expect(page.getByText(`${channel.name} 官方介绍`)).toBeVisible();
+  await expect(page.getByText(channel.introTitle || `${channel.provider} 官方介绍`)).toBeVisible();
   await expect(page.getByText("综合健康指数 · TokHub Index")).toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(channel.name) })).toBeVisible();
   await expect(page.getByText(/基础监控/).first()).toBeVisible();
   await expect(page.getByText(/真实监控/).first()).toBeVisible();
+});
+
+test("phase 2 dashboard preserves sub-cent probe cost display", async ({ page }) => {
+  const fulfillJSON = (route: Route, value: unknown) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(value) });
+
+  await page.route("**/api/public/**", (route) => {
+    const url = new URL(route.request().url());
+    switch (url.pathname) {
+      case "/api/public/overview":
+        return fulfillJSON(route, {
+          total: 1,
+          healthy: 1,
+          functionalDown: 0,
+          connectivityDown: 0,
+          degraded: 0,
+          unknown: 0,
+          healthyRate: 100,
+          p95LatencySeconds: 0.82,
+          averageLatencyMs: 820,
+          slowRate: 0,
+          probeCostToday: 0.002044,
+          probeTokensToday: 393,
+          probeRunsToday: 235,
+          updatedAt: new Date().toISOString()
+        });
+      case "/api/public/channels":
+        return fulfillJSON(route, { items: [], total: 0, page: 1, pageSize: 100 });
+      case "/api/public/providers/rank":
+      case "/api/public/errors/summary":
+        return fulfillJSON(route, { items: [] });
+      case "/api/public/site-config":
+        return fulfillJSON(route, {
+          registrationOpen: true,
+          showRegisterCta: true,
+          emailVerificationRequired: false,
+          adminPath: "/admin",
+          brandName: "TokHub",
+          logoMark: "T",
+          subtitle: "",
+          publicUrl: "",
+          footerText: "",
+          defaultGatewayPolicy: "latency",
+          timezone: "Asia/Shanghai",
+          navItems: [],
+          footerLinks: [],
+          monitorModels: [],
+          analyticsCode: ""
+        });
+      default:
+        return route.fallback();
+    }
+  });
+  await page.route("**/api/auth/me", (route) => fulfillJSON(route, { user: null }));
+
+  await page.goto("/dashboard");
+  const card = page.locator(".kpi", { hasText: "今日探测 Token 成本" });
+  await expect(card.locator(".k-value")).toHaveText("$0.002");
+  await expect(card.locator(".k-foot")).toHaveText("393 tokens · 235 次探测");
 });
 
 test("phase 2 channel row opens preview drawer before full detail", async ({ page, request }) => {

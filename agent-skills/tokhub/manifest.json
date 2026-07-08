@@ -1,0 +1,30 @@
+{
+  "name": "tokhub",
+  "version": "0.1.0",
+  "status": "active",
+  "maturity_tier": "governed",
+  "lifecycle": "governed",
+  "updated_at": "2026-07-08",
+  "context_budget_tier": "governed",
+  "owner": "Yao Team",
+  "review_cadence": "before external distribution and after TokHub API permission changes",
+  "input_files": [
+    "SKILL.md",
+    "references/session-auth-contract.md",
+    "references/permission-model.md",
+    "references/operation-catalog.json",
+    "references/admin-agent-contract.md",
+    "references/admin-agent-operation-catalog.json",
+    "scripts/tokhub.mjs",
+    "evals/trigger_cases.json",
+    "evals/semantic_config.json",
+    "reports/trust-boundary.md",
+    "reports/output-risk-profile.md",
+    "reports/output_quality_scorecard.md",
+    "reports/security_trust_report.json",
+    "reports/security_trust_report.md"
+  ],
+  "output_contract": "Execute TokHub operations through the logged-in user's website-equivalent permissions, return redacted results, and block guarded operations without explicit execution metadata.",
+  "rollback_boundary": "Remove agent-skills/tokhub and skills/tokhub; restore tokhub-admin from previous package if needed. No database or server migration is involved.",
+  "trust_report": "reports/trust-boundary.md"
+}
