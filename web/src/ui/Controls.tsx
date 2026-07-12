@@ -116,22 +116,25 @@ export function StatusBadge({ children, tone = "gray", dot = true, className = "
 export function TrendBars({
   values,
   label = "30-day trend",
-  maxBars = 30,
+  maxBars,
   maxWidth,
   className = ""
 }: {
-  values: number[];
+  values: Array<number | null>;
   label?: string;
   maxBars?: number;
   maxWidth?: string;
   className?: string;
 }) {
-  const rawPoints = values.slice(-maxBars);
-  const points = Array.from({ length: maxBars }, (_, index): number | null => {
-    const sourceIndex = index - (maxBars - rawPoints.length);
+  const barCount = Math.max(1, maxBars ?? Math.min(Math.max(values.length, 1), 30));
+  const rawPoints = values.slice(-barCount);
+  const points = Array.from({ length: barCount }, (_, index): number | null => {
+    const sourceIndex = index - (barCount - rawPoints.length);
     return sourceIndex >= 0 && sourceIndex < rawPoints.length ? rawPoints[sourceIndex] ?? null : null;
   });
-  const style = maxWidth ? ({ "--tk-trend-bar-max": maxWidth } as CSSProperties) : undefined;
+  const style = {
+    ...(maxWidth ? { "--tk-trend-bar-max": maxWidth } : {})
+  } as CSSProperties;
   return (
     <div className={cx("tk-trend-bars model-trend-bars", className)} aria-label={values.length ? label : `${label}: no data`} style={style}>
       {points.map((value, index) => {

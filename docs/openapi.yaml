@@ -68,6 +68,7 @@ paths:
         - $ref: "#/components/parameters/Status"
         - $ref: "#/components/parameters/Provider"
         - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Range"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
@@ -126,6 +127,8 @@ paths:
       tags: [Public Monitoring]
       summary: Provider ranking
       operationId: getPublicProviderRank
+      parameters:
+        - $ref: "#/components/parameters/Range"
       responses:
         "200":
           description: Provider ranking by health and latency.
@@ -144,6 +147,8 @@ paths:
       tags: [Public Monitoring]
       summary: Public error summary
       operationId: getPublicErrorsSummary
+      parameters:
+        - $ref: "#/components/parameters/Range"
       responses:
         "200":
           description: Error distribution.
@@ -478,6 +483,13 @@ components:
       in: query
       schema:
         type: string
+    Range:
+      name: range
+      in: query
+      description: Monitoring range for range-aware metrics and trend buckets.
+      schema:
+        type: string
+        enum: ["24", "7", "30", "all"]
     Page:
       name: page
       in: query
@@ -588,6 +600,25 @@ components:
           type: number
         qualityScore:
           type: integer
+        trend:
+          type: array
+          description: Legacy recent snapshot scores.
+          items:
+            type: integer
+        trendBuckets:
+          type: array
+          description: Range-aware trend buckets. Null value means no snapshot in that bucket.
+          items:
+            type: object
+            required: [key, label]
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              value:
+                type: integer
+                nullable: true
     ChannelDiagnosis:
       type: object
       required: [code, label, severity]

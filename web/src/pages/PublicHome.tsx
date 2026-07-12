@@ -28,6 +28,7 @@ import {
   register,
   removeFavorite,
   siteConfig,
+  TrendBucket,
   User,
   verifyEmail
 } from "../lib/api";
@@ -65,6 +66,23 @@ const statusOptions = [
   ["auth_error", "认证异常"],
   ["unknown", "未知"]
 ];
+
+const publicRefreshIntervalMs = 10_000;
+
+function rangeOptionLabel(range: string) {
+  if (range === "24") return "近24h";
+  if (range === "7") return "近7天";
+  if (range === "30") return "近30天";
+  return "全量";
+}
+
+function trendHeaderLabel(range: string) {
+  return `${rangeOptionLabel(range)}趋势`;
+}
+
+function uptimeHeaderLabel(range: string) {
+  return `${rangeOptionLabel(range)}可用率`;
+}
 
 const statusClass: Record<string, string> = {
   healthy: "b-green",
@@ -110,8 +128,9 @@ export function PublicHome() {
   const [channelFilter, setChannelFilter] = useState("all");
   const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
-  const [range, setRange] = useState("30");
+  const [range, setRange] = useState("24");
   const [loading, setLoading] = useState(true);
+  const [publicDataRange, setPublicDataRange] = useState("");
   const [personalLoading, setPersonalLoading] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [registrationOpen, setRegistrationOpen] = useState(true);
@@ -123,7 +142,7 @@ export function PublicHome() {
   const [privateItems, setPrivateItems] = useState<PrivateChannel[]>([]);
   const [privateCount, setPrivateCount] = useState(0);
   const [coreMonitorModels, setCoreMonitorModels] = useState<CoreMonitorModel[]>(DEFAULT_CORE_MONITOR_MODELS);
-  const [selectedChannel, setSelectedChannel] = useState<PublicChannel | null>(null);
+  const [selectedBrandKey, setSelectedBrandKey] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingPublicAction | null>(null);
   const [privateFormOpen, setPrivateFormOpen] = useState(false);
@@ -135,27 +154,14 @@ export function PublicHome() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
     setError("");
-    Promise.all([
-      publicOverview(),
-      publicChannels({ page: 1, pageSize: 100 }),
-      providerRank(range),
-      errorsSummary(range)
-    ])
-      .then(([overviewValue, channelList, rankList, errorList]) => {
+    publicOverview()
+      .then((overviewValue) => {
         if (!active) return;
         setOverview(overviewValue);
-        setChannels(channelList.items);
-        setTotal(channelList.total);
-        setRank(rankList.items);
-        setErrors(errorList.items);
       })
       .catch((err: Error) => {
         if (active) setError(err.message);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
       });
     return () => {
       active = false;
@@ -164,19 +170,33 @@ export function PublicHome() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([providerRank(range), errorsSummary(range)])
-      .then(([rankList, errorList]) => {
+    async function refreshPublicData(showLoading: boolean) {
+      if (showLoading) setLoading(true);
+      setError("");
+      try {
+        const [channelList, rankList, errorList] = await Promise.all([
+          publicChannels({ page: 1, pageSize: 100, range }),
+          providerRank(range),
+          errorsSummary(range)
+        ]);
         if (!active) return;
+        setChannels(channelList.items);
+        setTotal(channelList.total);
         setRank(rankList.items);
         setErrors(errorList.items);
-      })
-      .catch(() => {
-        if (!active) return;
-        setRank([]);
-        setErrors([]);
-      });
+        setPublicDataRange(range);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "公开看板加载失败");
+      } finally {
+        if (active && showLoading) setLoading(false);
+      }
+    }
+
+    void refreshPublicData(true);
+    const refreshTimer = window.setInterval(() => void refreshPublicData(false), publicRefreshIntervalMs);
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
     };
   }, [range]);
 
@@ -366,11 +386,15 @@ export function PublicHome() {
     }
   }
 
+  const rangedFavoriteItems = useMemo(() => {
+    const byID = new Map(channels.map((item) => [item.id, item]));
+    return favoriteItems.map((item) => byID.get(item.id) ?? item);
+  }, [channels, favoriteItems]);
   const boardSource = useMemo(() => {
-    if (activeBoardTab === "favorites") return favoriteItems;
+    if (activeBoardTab === "favorites") return rangedFavoriteItems;
     if (activeBoardTab === "private") return privateItems;
     return channels;
-  }, [activeBoardTab, channels, favoriteItems, privateItems]);
+  }, [activeBoardTab, channels, rangedFavoriteItems, privateItems]);
   const providers = useMemo(() => Array.from(new Set(boardSource.map((ch) => ch.provider).filter(Boolean))).sort(), [boardSource]);
   const categoryOptions = useMemo(() => buildCategoryOptions(boardSource), [boardSource]);
   const channelOptions = useMemo(() => buildChannelOptions(boardSource), [boardSource]);
@@ -380,10 +404,18 @@ export function PublicHome() {
   );
   const filteredChannels = useMemo(() => filterChannels(channels, boardFilter), [channels, boardFilter]);
   const brandChannels = useMemo(() => buildBrandRows(filteredChannels, coreMonitorModels), [filteredChannels, coreMonitorModels]);
+  const allBrandChannels = useMemo(() => buildBrandRows(channels, coreMonitorModels), [channels, coreMonitorModels]);
   const modelRows = useMemo(() => buildModelRows(filteredChannels, coreMonitorModels), [filteredChannels, coreMonitorModels]);
-  const filteredFavorites = useMemo(() => filterChannels(favoriteItems, boardFilter), [favoriteItems, boardFilter]);
+  const filteredFavorites = useMemo(() => filterChannels(rangedFavoriteItems, boardFilter), [rangedFavoriteItems, boardFilter]);
   const brandFavorites = useMemo(() => buildBrandRows(filteredFavorites, coreMonitorModels), [filteredFavorites, coreMonitorModels]);
   const filteredPrivate = useMemo(() => filterChannels(privateItems, boardFilter), [privateItems, boardFilter]);
+  const selectedChannel = useMemo(
+    () => allBrandChannels.find((item) => item.key === selectedBrandKey)?.primaryChannel ?? null,
+    [allBrandChannels, selectedBrandKey]
+  );
+  const visiblePublicRange = publicDataRange || range;
+  const initialPublicLoading = loading && !publicDataRange;
+  const refreshingPublic = loading && Boolean(publicDataRange);
   const exportURL = useMemo(() => {
     const params = new URLSearchParams();
     if (provider !== "all") params.set("provider", provider);
@@ -520,25 +552,26 @@ export function PublicHome() {
           </div>
           <div className="seg public-range-seg">
             {["24", "7", "30", "all"].map((item) => (
-              <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>
-                {item === "24" ? "近24h" : item === "all" ? "全天" : `近${item}天`}
+              <button className={[range === item ? "active" : "", refreshingPublic && range === item ? "refreshing" : ""].filter(Boolean).join(" ")} key={item} onClick={() => setRange(item)}>
+                {rangeOptionLabel(item)}
               </button>
             ))}
           </div>
         </FilterBar>
 
-        <div className="card board public-board">
-          {activeBoardTab === "all" && loading ? <div className="empty-state"><div className="ico">⌁</div><h4>正在加载通道数据</h4><p>公开看板正在读取 `/api/public/*`。</p></div> : null}
-          {activeBoardTab === "all" && !loading && dimension === "brand" ? <BrandTable channels={brandChannels} favorites={favoriteIDs} onToggleFavorite={(id) => void toggleFavorite(id)} onOpenChannel={setSelectedChannel} /> : null}
-          {activeBoardTab === "all" && !loading && dimension === "model" ? <ModelTable rows={modelRows} /> : null}
+        <div className={`card board public-board ${refreshingPublic && activeBoardTab !== "private" ? "is-refreshing" : ""}`} aria-busy={refreshingPublic && activeBoardTab !== "private"}>
+          {activeBoardTab === "all" && initialPublicLoading ? <div className="empty-state"><div className="ico">⌁</div><h4>正在加载通道数据</h4><p>公开看板正在读取 `/api/public/*`。</p></div> : null}
+          {activeBoardTab === "all" && !initialPublicLoading && dimension === "brand" ? <BrandTable channels={brandChannels} favorites={favoriteIDs} range={visiblePublicRange} onToggleFavorite={(id) => void toggleFavorite(id)} onOpenBrand={(brand) => setSelectedBrandKey(brand.key)} /> : null}
+          {activeBoardTab === "all" && !initialPublicLoading && dimension === "model" ? <ModelTable rows={modelRows} range={visiblePublicRange} /> : null}
           {activeBoardTab === "favorites" ? (
             <PublicFavoritePanel
               loading={personalLoading}
               channels={brandFavorites}
               total={favoriteItems.length}
               favorites={favoriteIDs}
+              range={visiblePublicRange}
               onToggleFavorite={(id) => void toggleFavorite(id)}
-              onOpenChannel={setSelectedChannel}
+              onOpenBrand={(brand) => setSelectedBrandKey(brand.key)}
               onExplore={() => switchBoardTab("all")}
             />
           ) : null}
@@ -559,7 +592,7 @@ export function PublicHome() {
 
         <div className="section-head" id="providers">
           <h2>
-            供应商排行 <span className="tag">近{range === "all" ? "全量" : `${range}天`}</span>
+            供应商排行 <span className="tag">{rangeOptionLabel(visiblePublicRange)}</span>
           </h2>
           <span className="sub">基于真实调用成功率、P95 延迟与故障次数综合排序</span>
         </div>
@@ -580,12 +613,12 @@ export function PublicHome() {
           </div>
           <div className="card card-pad error-summary-card">
             <div className="module-title">错误分类分布</div>
-            <div className="module-sub">{range === "all" ? "全量" : range === "24" ? "近24小时" : `近${range}天`}失败探测的错误类型占比</div>
+            <div className="module-sub">{rangeOptionLabel(visiblePublicRange)}失败探测的错误类型占比</div>
             <ErrorBars errors={errors} />
           </div>
         </div>
       </main>
-      <ChannelPreviewDialog channel={selectedChannel} isFavorite={selectedChannel ? favoriteIDs.has(selectedChannel.id) : false} onToggleFavorite={(id) => void toggleFavorite(id)} onClose={() => setSelectedChannel(null)} />
+      <ChannelPreviewDialog channel={selectedChannel} range={visiblePublicRange} isFavorite={selectedChannel ? favoriteIDs.has(selectedChannel.id) : false} onToggleFavorite={(id) => void toggleFavorite(id)} onClose={() => setSelectedBrandKey("")} />
       <AuthDialog
         open={authOpen}
         onOpenChange={(open) => {
@@ -747,16 +780,18 @@ function PublicFavoritePanel({
   channels,
   total,
   favorites,
+  range,
   onToggleFavorite,
-  onOpenChannel,
+  onOpenBrand,
   onExplore
 }: {
   loading: boolean;
   channels: BrandMonitorRow[];
   total: number;
   favorites: Set<string>;
+  range: string;
   onToggleFavorite: (channelID: string) => void;
-  onOpenChannel: (channel: PublicChannel) => void;
+  onOpenBrand: (brand: BrandMonitorRow) => void;
   onExplore: () => void;
 }) {
   if (loading) {
@@ -772,7 +807,7 @@ function PublicFavoritePanel({
       </div>
     );
   }
-  return <BrandTable channels={channels} favorites={favorites} onToggleFavorite={onToggleFavorite} onOpenChannel={onOpenChannel} />;
+  return <BrandTable channels={channels} favorites={favorites} range={range} onToggleFavorite={onToggleFavorite} onOpenBrand={onOpenBrand} />;
 }
 
 function PublicPrivateChannelPanel({
@@ -873,10 +908,12 @@ function PublicPrivateChannelPanel({
   );
 }
 
-function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { channels: BrandMonitorRow[]; favorites: Set<string>; onToggleFavorite: (channelID: string) => void; onOpenChannel: (channel: PublicChannel) => void }) {
+function BrandTable({ channels, favorites, range, onToggleFavorite, onOpenBrand }: { channels: BrandMonitorRow[]; favorites: Set<string>; range: string; onToggleFavorite: (channelID: string) => void; onOpenBrand: (brand: BrandMonitorRow) => void }) {
   if (!channels.length) {
     return <div className="empty-state"><div className="ico">⌕</div><h4>没有匹配通道</h4><p>调整服务商、状态或搜索条件后再试。</p></div>;
   }
+  const trendLabel = trendHeaderLabel(range);
+  const uptimeLabel = uptimeHeaderLabel(range);
   return (
     <>
       <div className="scroll">
@@ -901,15 +938,15 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
               <th>基础监控 · L1/L2</th>
               <th>真实监控 · L3</th>
               <th>真实延迟</th>
-              <th>24h 可用率</th>
+              <th>{uptimeLabel}</th>
               <th>质量评分</th>
-              <th>近30天趋势</th>
+              <th>{trendLabel}</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {channels.map((ch) => (
-              <tr className="channel-click-row" key={ch.id} onClick={() => onOpenChannel(ch.primaryChannel)}>
+              <tr className="channel-click-row" key={ch.id} onClick={() => onOpenBrand(ch)}>
                 <td className="fav-col">
                   <button
                     className={`fav-btn ${ch.channels.some((item) => favorites.has(item.id)) ? "on" : ""}`}
@@ -940,7 +977,7 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
                 <td className="num">{ch.latencyP95Ms ? `${ch.latencyP95Ms}ms` : "—"}</td>
                 <td className="num">{ch.uptime24h.toFixed(1)}%</td>
                 <td><Score value={ch.score} /></td>
-                <td className="channel-trend-cell tk-trend-cell"><TrendBars values={ch.trend} maxWidth="146px" /></td>
+                <td className="channel-trend-cell tk-trend-cell"><TrendBars values={trendValues(ch)} maxBars={trendBarCount(ch, range)} label={trendLabel} maxWidth="146px" /></td>
                 <td className="channel-action-cell"><OfficialRegisterAction channel={ch.primaryChannel} /></td>
               </tr>
             ))}
@@ -959,7 +996,7 @@ function BrandTable({ channels, favorites, onToggleFavorite, onOpenChannel }: { 
   );
 }
 
-function ChannelPreviewDialog({ channel, isFavorite, onToggleFavorite, onClose }: { channel: PublicChannel | null; isFavorite: boolean; onToggleFavorite: (channelID: string) => void; onClose: () => void }) {
+function ChannelPreviewDialog({ channel, range, isFavorite, onToggleFavorite, onClose }: { channel: PublicChannel | null; range: string; isFavorite: boolean; onToggleFavorite: (channelID: string) => void; onClose: () => void }) {
   const open = Boolean(channel);
   if (!channel) {
     return null;
@@ -1006,7 +1043,7 @@ function ChannelPreviewDialog({ channel, isFavorite, onToggleFavorite, onClose }
           </div>
 
           <div className="preview-grid">
-            <PreviewMetric label="24h 可用率" value={`${channel.uptime24h.toFixed(1)}%`} />
+            <PreviewMetric label={uptimeHeaderLabel(range)} value={`${channel.uptime24h.toFixed(1)}%`} />
             <PreviewMetric label="真实延迟" value={channel.latencyP95Ms ? `${channel.latencyP95Ms}ms` : "—"} />
             <PreviewMetric label="成功率" value={`${channel.successRate.toFixed(1)}%`} />
             <PreviewMetric label="L1 / L2" value={`${channel.l1LatencyMs || 0}ms / ${channel.l2LatencyMs || 0}ms`} />
@@ -1025,10 +1062,10 @@ function ChannelPreviewDialog({ channel, isFavorite, onToggleFavorite, onClose }
             ))}
           </div>
 
-          <div className="module-title preview-section-title preview-section-title-tight">近 90 次可用率趋势</div>
+          <div className="module-title preview-section-title preview-section-title-tight">{trendHeaderLabel(range)}</div>
           <div className="preview-trend">
-            <Spark values={channel.trend} />
-            <div className="heat">{channel.trend.slice(-24).map((value, index) => <i className={heatClass(value)} key={`${value}-${index}`} />)}</div>
+            <Spark values={trendValues(channel)} />
+            <div className="heat">{trendValues(channel).slice(-24).map((value, index) => <i className={heatClass(value)} key={`${value ?? "empty"}-${index}`} />)}</div>
           </div>
 
           <div className="module-title preview-section-title preview-section-title-spaced">真实探测日志 · L3</div>
@@ -1299,8 +1336,8 @@ function buildPreviewWaterfall(channel: PublicChannel) {
   }));
 }
 
-function heatClass(value: number) {
-  if (value <= 0) return "na";
+function heatClass(value: number | null) {
+  if (value === null || value <= 0) return "na";
   if (value < 50) return "down";
   if (value < 75) return "warn";
   return "";
@@ -1327,6 +1364,7 @@ type ModelRow = {
   avgSuccess: number;
   avgScore: number;
   trend: number[];
+  trendBuckets: TrendBucket[];
 };
 
 type BrandMonitorRow = {
@@ -1354,9 +1392,10 @@ type BrandMonitorRow = {
   errorType: string;
   lastProbeAt: string;
   trend: number[];
+  trendBuckets: TrendBucket[];
 };
 
-function ModelTable({ rows }: { rows: ModelRow[] }) {
+function ModelTable({ rows, range }: { rows: ModelRow[]; range: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([rows[0]?.key ?? DEFAULT_CORE_MONITOR_MODELS[0].key]));
 
   useEffect(() => {
@@ -1383,6 +1422,7 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
   if (!rows.length) {
     return <div className="empty-state"><div className="ico">⌕</div><h4>暂无模型维度数据</h4><p>管理员录入平台通道并完成探测后，这里会展示模型聚合表现。</p></div>;
   }
+  const trendLabel = trendHeaderLabel(range);
   return (
     <div className="scroll">
       <table className="tk model-table">
@@ -1406,7 +1446,7 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
             <th>平均成功率</th>
             <th>最便宜</th>
             <th>平均评分</th>
-            <th>近30天趋势</th>
+            <th>{trendLabel}</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -1460,7 +1500,7 @@ function ModelTable({ rows }: { rows: ModelRow[] }) {
                     </div>
                   </td>
                   <td><ScoreRing value={row.avgScore} /></td>
-                  <td className="model-trend-cell tk-trend-cell"><TrendBars values={row.trend} maxWidth="142px" /></td>
+                  <td className="model-trend-cell tk-trend-cell"><TrendBars values={trendValues(row)} maxBars={trendBarCount(row, range)} label={trendLabel} maxWidth="142px" /></td>
                   <td className="channel-action-cell"><OfficialRegisterAction channel={modelActionChannel(row)} /></td>
                 </tr>
                 {open ? (
@@ -1591,7 +1631,8 @@ function buildModelRows(channels: PublicChannel[], models: CoreMonitorModel[]): 
       avgLatency,
       avgSuccess: list.length ? list.reduce((sum, ch) => sum + ch.successRate, 0) / list.length : 0,
       avgScore: list.length ? Math.round(list.reduce((sum, ch) => sum + ch.score, 0) / list.length) : 0,
-      trend: mergeTrend(list)
+      trend: mergeTrend(list),
+      trendBuckets: mergeTrendBuckets(list)
     };
   });
 }
@@ -1621,6 +1662,33 @@ function mergeTrend(channels: PublicChannel[]) {
     }
   }
   return merged.slice(-30);
+}
+
+function mergeTrendBuckets(channels: PublicChannel[]): TrendBucket[] {
+  const template = channels.find((item) => item.trendBuckets?.length)?.trendBuckets ?? [];
+  if (!template.length) return [];
+  const bucketMaps = channels.map((channel) => new Map((channel.trendBuckets ?? []).map((bucket) => [bucket.key, bucket.value])));
+  return template.map((bucket) => {
+    const values = bucketMaps
+      .map((map) => map.get(bucket.key))
+      .filter((value): value is number => typeof value === "number");
+    return {
+      ...bucket,
+      value: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null
+    };
+  });
+}
+
+function trendValues(row: { trend: number[]; trendBuckets?: TrendBucket[] }) {
+  return row.trendBuckets?.length ? row.trendBuckets.map((bucket) => bucket.value) : row.trend;
+}
+
+function trendBarCount(row: { trend: number[]; trendBuckets?: TrendBucket[] }, range: string) {
+  // Keep seven-day data in a dense rail so it matches the visual language of the 30-day trend.
+  if (range === "7") return 30;
+  if (row.trendBuckets?.length) return row.trendBuckets.length;
+  if (range === "24") return 24;
+  return 30;
 }
 
 function buildBrandRows(items: PublicChannel[], models: CoreMonitorModel[]) {
@@ -1677,7 +1745,8 @@ function buildBrandMonitorRow(key: string, channels: PublicChannel[], models: Co
     l3LatencyMs: averageNumber(channels.map((channel) => channel.l3LatencyMs), { positiveOnly: true }),
     errorType: uniqueText(channels.map((channel) => channel.errorType)).join(" / "),
     lastProbeAt: latestProbeAt(channels),
-    trend: mergeTrend(channels)
+    trend: primaryChannel.trend,
+    trendBuckets: primaryChannel.trendBuckets ?? []
   } satisfies BrandMonitorRow;
 }
 
@@ -1933,8 +2002,9 @@ function ScoreRing({ value }: { value: number }) {
   );
 }
 
-function Spark({ values }: { values: number[] }) {
-  const points = values.length ? values : [50, 52, 49, 56];
+function Spark({ values }: { values: Array<number | null> }) {
+  const fallback = values.find((value): value is number => typeof value === "number") ?? 50;
+  const points = values.length ? values.map((value) => (typeof value === "number" ? value : fallback)) : [50, 52, 49, 56];
   const max = Math.max(...points);
   const min = Math.min(...points);
   const path = points

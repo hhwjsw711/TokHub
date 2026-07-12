@@ -461,7 +461,7 @@ func renderHomeSEOBody(site store.SiteConfig, overview store.PublicOverview, cha
 	fmt.Fprintf(&b, "<p>通道明细看板是 /dashboard 的核心模块，包含全部通道、品牌维度、模型维度、我的关注、我的私有通道、状态筛选、服务商筛选、通道筛选、关键词搜索、时间范围和 CSV 导出入口。</p>")
 	fmt.Fprintf(&b, "<ul>")
 	fmt.Fprintf(&b, "<li>全部通道：按品牌或模型聚合公开 AI API 中转站。</li>")
-	fmt.Fprintf(&b, "<li>品牌维度：展示服务商、模型、综合状态、L1/L2/L3、P95 延迟、24H 可用率和近 90 次趋势。</li>")
+	fmt.Fprintf(&b, "<li>品牌维度：展示服务商、模型、综合状态、L1/L2/L3、范围可用率和随时间范围切换的趋势。</li>")
 	fmt.Fprintf(&b, "<li>模型维度：按模型聚合同类中转站表现，适合比较同一模型的可用入口。</li>")
 	fmt.Fprintf(&b, "<li>我的关注：登录后展示收藏的公开平台通道。</li>")
 	fmt.Fprintf(&b, "<li>我的私有通道：登录后展示用户自有 Endpoint、模型、探测结果和配额状态。</li>")

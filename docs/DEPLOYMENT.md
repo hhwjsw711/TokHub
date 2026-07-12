@@ -68,7 +68,7 @@ node agent-skills/tokhub/scripts/tokhub.mjs admin-agent preflight
 node agent-skills/tokhub/scripts/tokhub.mjs admin-agent request GET /api/admin/channels
 ```
 
-`~/.tokhub-admin.env` 只保存在本机并应保持 `0600` 权限。旧 `tokhub-admin` skill 仍保留为兼容入口，但新任务应优先使用 `tokhub`。
+`~/.tokhub-admin.env` 只保存在本机并应保持 `0600` 权限。仓库不再发布单独的 `tokhub-admin` skill；旧名称由 `tokhub` skill 的 admin-agent 分支兼容承接。
 
 ## 生产自托管注意事项
 

@@ -19,7 +19,7 @@
     },
     "admin_operations": {
       "weight": 0.25,
-      "phrases": ["admin", "owner", "管理员", "production health", "admin-agent", "platform channels", "平台通道"]
+      "phrases": ["admin", "owner", "管理员", "production health", "admin-agent", "platform channels", "平台通道", "tokhub-admin", "legacy skill", "old tokhub-admin", "旧 tokhub-admin"]
     },
     "safety_guard": {
       "weight": 0.2,
@@ -46,11 +46,6 @@
       "weight": 0.8,
       "exclusive": true,
       "phrases": ["bypass permission", "bypass permissions", "bypass tokhub permissions", "admin-only", "normal user can see", "绕过权限", "普通用户看 admin", "ignore role"]
-    },
-    "legacy_admin_alias": {
-      "weight": 0.55,
-      "exclusive": true,
-      "phrases": ["legacy skill", "old tokhub-admin", "tokhub-admin legacy", "旧 tokhub-admin"]
     }
   }
 }

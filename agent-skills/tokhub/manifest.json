@@ -25,6 +25,6 @@
     "reports/security_trust_report.md"
   ],
   "output_contract": "Execute TokHub operations through the logged-in user's website-equivalent permissions, return redacted results, and block guarded operations without explicit execution metadata.",
-  "rollback_boundary": "Remove agent-skills/tokhub and skills/tokhub; restore tokhub-admin from previous package if needed. No database or server migration is involved.",
+  "rollback_boundary": "Revert agent-skills/tokhub to the previous package if needed. The retired tokhub-admin name is supported by tokhub admin-agent mode; no database or server migration is involved.",
   "trust_report": "reports/trust-boundary.md"
 }
