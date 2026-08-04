@@ -29,7 +29,7 @@ test("brand trend uses the same primary channel data as its preview", async ({ p
   await expect(row.locator(".tk-trend-bars i").first()).toHaveClass(/ok/);
 
   await row.click();
-  await expect(page.getByRole("dialog", { name: "Trend Source" }).locator(".heat i").first()).not.toHaveClass(/down|warn|na/);
+  await expect(page.getByRole("dialog", { name: "Trend Source" }).locator(".preview-trend .tk-trend-bars i").first()).toHaveClass(/ok/);
 });
 
 test("open preview updates when the public channel poll returns a newer probe", async ({ page }) => {
@@ -48,11 +48,11 @@ test("open preview updates when the public channel poll returns a newer probe", 
   const row = page.locator("tr.channel-click-row").filter({ hasText: "Preview Refresh" });
   await row.click();
   const dialog = page.getByRole("dialog", { name: "Preview Refresh" });
-  await expect(dialog.locator(".heat i").first()).not.toHaveClass(/down|warn|na/);
+  await expect(dialog.locator(".preview-trend .tk-trend-bars i").first()).toHaveClass(/ok/);
 
   const refresh = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/public/channels");
   await refresh;
-  await expect(dialog.locator(".heat i").first()).toHaveClass(/down/);
+  await expect(dialog.locator(".preview-trend .tk-trend-bars i").first()).toHaveClass(/bad/);
 });
 
 async function loadChannelFixture(page: Page): Promise<PublicChannel> {

@@ -67,6 +67,36 @@ func TestReleaseMigrationsDoNotOverwriteRuntimeManagedContent(t *testing.T) {
 	}
 }
 
+func TestProviderAffiliateLinkMigrationIsScopedAndSecretFree(t *testing.T) {
+	migration0045 := strings.ToLower(readMigrationForContract(t, "0045_update_provider_affiliate_links.sql"))
+	expectedLinks := []string{
+		"https://www.ccsub.net/go/vwp3gkkd",
+		"https://runapi.co/register?aff=dw73",
+		"https://www.aicodemirror.com/register?invitecode=y61tp9",
+		"https://crazyrouter.com/register?aff=xcyn",
+		"https://apikey.fun/register?aff=wf5quc4nwv4k",
+		"https://apinebula.com/kn9g18",
+	}
+	for _, link := range expectedLinks {
+		if !strings.Contains(migration0045, link) {
+			t.Fatalf("0045 must include affiliate link %q", link)
+		}
+	}
+	for _, guard := range []string{
+		"c.owner_type = 'platform'",
+		"c.deleted_at is null",
+		"c.status <> 'deleted'",
+		"update recommend_picks",
+	} {
+		if !strings.Contains(migration0045, guard) {
+			t.Fatalf("0045 must keep scope guard %q", guard)
+		}
+	}
+	if strings.Contains(migration0045, "sk-") {
+		t.Fatal("0045 must not contain provider API keys")
+	}
+}
+
 func readMigrationForContract(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", name))

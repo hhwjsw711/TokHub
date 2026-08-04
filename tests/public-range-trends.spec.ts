@@ -16,7 +16,7 @@ async function trendMetrics(page: Page) {
   });
 }
 
-test("public seven-day trend uses the same dense rail as thirty-day trend", async ({ page }) => {
+test("public seven-day trend renders twenty-one eight-hour buckets", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "监控总览" })).toBeVisible();
@@ -24,11 +24,15 @@ test("public seven-day trend uses the same dense rail as thirty-day trend", asyn
   await page.getByRole("button", { name: "近7天" }).first().click();
   await expect(page.getByRole("columnheader", { name: "近7天趋势" })).toBeVisible();
   const sevenDay = await trendMetrics(page);
-  expect(sevenDay.barCount).toBe(30);
-  expect(sevenDay.firstSlotsEmpty).toBe(true);
+  expect(sevenDay.barCount).toBe(21);
+  expect(sevenDay.firstSlotsEmpty).toBe(false);
   expect(sevenDay.firstBarWidth).toBeGreaterThanOrEqual(2.5);
   expect(sevenDay.firstBarWidth).toBeLessThanOrEqual(3.5);
   expect(Math.abs(sevenDay.span - sevenDay.railWidth)).toBeLessThanOrEqual(1);
+
+  await page.locator("tr.channel-click-row").first().click();
+  await expect(page.getByRole("link", { name: "查看完整详情 →" })).toHaveAttribute("href", /[?&]range=7/);
+  await page.getByRole("button", { name: "关闭通道预览" }).click();
 
   await page.getByRole("button", { name: "近30天" }).first().click();
   await expect(page.getByRole("columnheader", { name: "近30天趋势" })).toBeVisible();

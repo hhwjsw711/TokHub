@@ -15,9 +15,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"tokhub/internal/browserconnector"
+	"tokhub/internal/connections"
+	secretcrypto "tokhub/internal/crypto"
 	gatewaycache "tokhub/internal/gateway"
 	"tokhub/internal/store"
 )
+
+var errExperimentalGatewayBusy = errors.New("experimental gateway concurrency limit reached")
 
 type createGatewayRequest struct {
 	Name        string   `json:"name"`
@@ -915,51 +920,16 @@ func (s *Server) gatewayModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
-	if s.cfg.UpstreamMode == "real" {
-		candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway)
-		if len(candidates) == 0 {
-			s.recordGatewayFailure(r, authn, "", "", http.StatusBadGateway, "no_upstream", start, false)
-			writeError(w, r, http.StatusBadGateway, "no_upstream", "No healthy upstream is available")
-			return
-		}
-		lastErrType := "upstream_failed"
-		for _, upstream := range candidates {
-			apiKey, err := s.gatewayUpstreamAPIKey(r.Context(), authn, upstream)
-			if err != nil {
-				lastErrType = "upstream_credential_unavailable"
-				continue
-			}
-			result, err := s.upstreamClient.Models(r.Context(), gatewaycache.Upstream{
-				Name: upstream.Name, Provider: upstream.Provider, Type: upstream.Type, Endpoint: upstream.Endpoint, Model: upstream.Model, ProviderConfig: upstream.ProviderConfig,
-			}, apiKey)
-			if err != nil {
-				if result.ErrorType != "" {
-					lastErrType = result.ErrorType
-				}
-				s.openCircuit(upstream.ChannelID)
-				continue
-			}
-			_ = s.repo.RecordGatewayEvent(r.Context(), store.GatewayRequestEvent{
-				GatewayID:         authn.Gateway.ID,
-				GatewayKeyID:      authn.Key.ID,
-				UpstreamChannelID: upstream.ChannelID,
-				RequestPath:       "/gateway/v1/models",
-				StatusCode:        result.StatusCode,
-				LatencyMs:         int(time.Since(start).Milliseconds()),
-			})
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(result.StatusCode)
-			_, _ = w.Write(result.Body)
-			return
-		}
-		s.recordGatewayFailure(r, authn, "", "", http.StatusBadGateway, lastErrType, start, false)
-		writeError(w, r, http.StatusBadGateway, "upstream_failed", "All upstreams failed before first byte")
+	candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway)
+	if len(candidates) == 0 {
+		s.recordGatewayFailure(r, authn, "", "", http.StatusBadGateway, "no_upstream", start, false)
+		writeError(w, r, http.StatusBadGateway, "no_upstream", "No healthy upstream is available")
 		return
 	}
 	models := []map[string]any{}
 	seen := map[string]bool{}
-	for _, upstream := range authn.Gateway.Upstreams {
-		if !upstream.Enabled || seen[upstream.Model] {
+	for _, upstream := range candidates {
+		if seen[upstream.Model] {
 			continue
 		}
 		seen[upstream.Model] = true
@@ -996,6 +966,20 @@ func (s *Server) handleGatewayGeneration(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
+	release, err := s.acquireExperimentalGatewaySlot(r.Context(), authn.Gateway)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		code := "experimental_concurrency_unavailable"
+		message := "Experimental connection concurrency protection is unavailable"
+		if errors.Is(err, errExperimentalGatewayBusy) {
+			status = http.StatusTooManyRequests
+			code = "experimental_concurrency_limited"
+			message = "Experimental connection concurrency limit exceeded"
+		}
+		writeError(w, r, status, code, message)
+		return
+	}
+	defer release()
 	raw, payload, err := readGatewayPayload(r)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
@@ -1005,8 +989,13 @@ func (s *Server) handleGatewayGeneration(w http.ResponseWriter, r *http.Request,
 		payload.Model = firstGatewayModel(authn.Gateway)
 	}
 	start := time.Now()
-	candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway)
+	candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway, payload.Model)
 	if len(candidates) == 0 {
+		if !gatewaySupportsModel(authn.Gateway, payload.Model) {
+			s.recordGatewayFailure(r, authn, "", payload.Model, http.StatusBadRequest, "model_not_available", start, payload.Stream)
+			writeError(w, r, http.StatusBadRequest, "model_not_available", "The requested model is not available on this gateway")
+			return
+		}
 		s.recordGatewayFailure(r, authn, "", payload.Model, http.StatusBadGateway, "no_upstream", start, payload.Stream)
 		writeError(w, r, http.StatusBadGateway, "no_upstream", "No healthy upstream is available")
 		return
@@ -1048,6 +1037,18 @@ func (s *Server) handleGatewayAnthropicMessages(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	release, err := s.acquireExperimentalGatewaySlot(r.Context(), authn.Gateway)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		message := "Experimental connection concurrency protection is unavailable"
+		if errors.Is(err, errExperimentalGatewayBusy) {
+			status = http.StatusTooManyRequests
+			message = "Experimental connection concurrency limit exceeded"
+		}
+		writeAnthropicError(w, status, "rate_limit_error", message)
+		return
+	}
+	defer release()
 	raw, payload, err := readAnthropicGatewayPayload(r)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON body")
@@ -1057,8 +1058,13 @@ func (s *Server) handleGatewayAnthropicMessages(w http.ResponseWriter, r *http.R
 		payload.Model = firstGatewayModel(authn.Gateway)
 	}
 	start := time.Now()
-	candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway)
+	candidates := s.availableGatewayCandidates(r.Context(), authn.Gateway, payload.Model)
 	if len(candidates) == 0 {
+		if !gatewaySupportsModel(authn.Gateway, payload.Model) {
+			s.recordGatewayFailure(r, authn, "", payload.Model, http.StatusBadRequest, "model_not_available", start, payload.Stream)
+			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "The requested model is not available on this gateway")
+			return
+		}
 		s.recordGatewayFailure(r, authn, "", payload.Model, http.StatusBadGateway, "no_upstream", start, payload.Stream)
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "No healthy upstream is available")
 		return
@@ -1101,14 +1107,28 @@ func (s *Server) handleRealGatewayGeneration(w http.ResponseWriter, r *http.Requ
 	}
 	lastErrType := "upstream_failed"
 	for _, upstream := range candidates {
-		apiKey, err := s.gatewayUpstreamAPIKey(r.Context(), authn, upstream)
+		if isOpenCLIBrowserUpstream(upstream) {
+			s.handleOpenCLIBrowserGatewayGeneration(w, r, authn, upstream, kind, raw, payload, start)
+			return
+		}
+		credential, err := s.gatewayUpstreamAuthorization(r.Context(), authn, upstream)
 		if err != nil {
 			lastErrType = "upstream_credential_unavailable"
 			continue
 		}
 		clientUpstream := gatewaycache.Upstream{Name: upstream.Name, Provider: upstream.Provider, Type: upstream.Type, Endpoint: upstream.Endpoint, Model: upstream.Model, ProviderConfig: upstream.ProviderConfig}
 		if payload.Stream {
-			result, err := s.upstreamClient.Stream(r.Context(), clientUpstream, apiKey, kind, raw, estimated, w)
+			var result gatewaycache.UpstreamResult
+			if credential.Material != nil {
+				result, err = s.upstreamClient.StreamWithAuth(r.Context(), clientUpstream, *credential.Material, kind, raw, estimated, w)
+			} else {
+				result, err = s.upstreamClient.Stream(r.Context(), clientUpstream, credential.APIKey, kind, raw, estimated, w)
+			}
+			if err != nil && managedAuthorizationRejected(result, credential.Material) && !result.Wrote {
+				if refreshed, refreshErr := s.refreshGatewayUpstreamAuthorization(r.Context(), authn, upstream, true); refreshErr == nil && refreshed.Material != nil {
+					result, err = s.upstreamClient.StreamWithAuth(r.Context(), clientUpstream, *refreshed.Material, kind, raw, estimated, w)
+				}
+			}
 			usage := gatewayUsageFromUpstream(result.Usage)
 			if err != nil {
 				if result.ErrorType != "" {
@@ -1124,7 +1144,17 @@ func (s *Server) handleRealGatewayGeneration(w http.ResponseWriter, r *http.Requ
 			s.recordGatewaySuccess(r, authn, upstream, payload.Model, usage, result.StatusCode, start, true)
 			return
 		}
-		result, err := s.upstreamClient.JSON(r.Context(), clientUpstream, apiKey, kind, raw, estimated)
+		var result gatewaycache.UpstreamResult
+		if credential.Material != nil {
+			result, err = s.upstreamClient.JSONWithAuth(r.Context(), clientUpstream, *credential.Material, kind, raw, estimated)
+		} else {
+			result, err = s.upstreamClient.JSON(r.Context(), clientUpstream, credential.APIKey, kind, raw, estimated)
+		}
+		if err != nil && managedAuthorizationRejected(result, credential.Material) {
+			if refreshed, refreshErr := s.refreshGatewayUpstreamAuthorization(r.Context(), authn, upstream, true); refreshErr == nil && refreshed.Material != nil {
+				result, err = s.upstreamClient.JSONWithAuth(r.Context(), clientUpstream, *refreshed.Material, kind, raw, estimated)
+			}
+		}
 		if err != nil {
 			if result.ErrorType != "" {
 				lastErrType = result.ErrorType
@@ -1153,13 +1183,28 @@ func (s *Server) handleRealGatewayAnthropicMessages(w http.ResponseWriter, r *ht
 	}
 	lastErrType := "upstream_failed"
 	for _, upstream := range candidates {
-		apiKey, err := s.gatewayUpstreamAPIKey(r.Context(), authn, upstream)
+		if isOpenCLIBrowserUpstream(upstream) {
+			s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusUnprocessableEntity, "browser_protocol_unsupported", start, payload.Stream)
+			writeAnthropicError(w, http.StatusUnprocessableEntity, "invalid_request_error", "Personal browser connections support OpenAI chat and responses requests only")
+			return
+		}
+		credential, err := s.gatewayUpstreamAuthorization(r.Context(), authn, upstream)
 		if err != nil {
 			lastErrType = "upstream_credential_unavailable"
 			continue
 		}
 		clientUpstream := gatewaycache.Upstream{Name: upstream.Name, Provider: upstream.Provider, Type: upstream.Type, Endpoint: upstream.Endpoint, Model: upstream.Model, ProviderConfig: upstream.ProviderConfig}
-		result, err := s.upstreamClient.JSON(r.Context(), clientUpstream, apiKey, "chat", raw, estimated)
+		var result gatewaycache.UpstreamResult
+		if credential.Material != nil {
+			result, err = s.upstreamClient.JSONWithAuth(r.Context(), clientUpstream, *credential.Material, "chat", raw, estimated)
+		} else {
+			result, err = s.upstreamClient.JSON(r.Context(), clientUpstream, credential.APIKey, "chat", raw, estimated)
+		}
+		if err != nil && managedAuthorizationRejected(result, credential.Material) {
+			if refreshed, refreshErr := s.refreshGatewayUpstreamAuthorization(r.Context(), authn, upstream, true); refreshErr == nil && refreshed.Material != nil {
+				result, err = s.upstreamClient.JSONWithAuth(r.Context(), clientUpstream, *refreshed.Material, "chat", raw, estimated)
+			}
+		}
 		if err != nil {
 			if result.ErrorType != "" {
 				lastErrType = result.ErrorType
@@ -1181,6 +1226,11 @@ func (s *Server) handleRealGatewayAnthropicMessages(w http.ResponseWriter, r *ht
 	writeAnthropicError(w, http.StatusBadGateway, "api_error", "All upstreams failed before first byte")
 }
 
+func managedAuthorizationRejected(result gatewaycache.UpstreamResult, material *connections.AuthMaterial) bool {
+	return material != nil &&
+		(result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden)
+}
+
 func (s *Server) authenticateGatewayRequest(w http.ResponseWriter, r *http.Request) (store.AuthenticatedGatewayKey, bool) {
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	plainKey := ""
@@ -1199,23 +1249,24 @@ func (s *Server) authenticateGatewayRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, r, http.StatusUnauthorized, "gateway_unauthorized", "Gateway API key is invalid or revoked")
 		return store.AuthenticatedGatewayKey{}, false
 	}
-	qps := authn.Key.QPSLimit
-	if qps <= 0 {
-		qps = authn.Gateway.QPSLimit
-	}
-	if allowed, err := s.gatewayCache.AllowQPS(r.Context(), authn.Key.ID, qps); err == nil {
+	rateLimitKey, qps := gatewayRateLimitPolicy(authn)
+	if allowed, err := s.gatewayCache.AllowQPS(r.Context(), rateLimitKey, qps); err == nil {
 		if !allowed {
 			writeError(w, r, http.StatusTooManyRequests, "gateway_rate_limited", "Gateway key QPS limit exceeded")
 			return store.AuthenticatedGatewayKey{}, false
 		}
+	} else if gatewayUsesOpenCLIBrowser(authn.Gateway) {
+		s.logger.Warn("redis qps limiter unavailable; local browser gateway closed", "gateway_id", authn.Gateway.ID, "error", err)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_risk_guard_unavailable", "Personal browser protection is temporarily unavailable")
+		return store.AuthenticatedGatewayKey{}, false
 	} else if !errors.Is(err, gatewaycache.ErrUnavailable) {
 		s.logger.Warn("redis qps limiter failed; falling back to memory", "error", err)
-		if !s.allowRate(s.gatewayLimiter, authn.Key.ID, qps, time.Second) {
+		if !s.allowRate(s.gatewayLimiter, rateLimitKey, qps, time.Second) {
 			writeError(w, r, http.StatusTooManyRequests, "gateway_rate_limited", "Gateway key QPS limit exceeded")
 			return store.AuthenticatedGatewayKey{}, false
 		}
 	} else if errors.Is(err, gatewaycache.ErrUnavailable) {
-		if !s.allowRate(s.gatewayLimiter, authn.Key.ID, qps, time.Second) {
+		if !s.allowRate(s.gatewayLimiter, rateLimitKey, qps, time.Second) {
 			writeError(w, r, http.StatusTooManyRequests, "gateway_rate_limited", "Gateway key QPS limit exceeded")
 			return store.AuthenticatedGatewayKey{}, false
 		}
@@ -1232,10 +1283,85 @@ func (s *Server) authenticateGatewayRequest(w http.ResponseWriter, r *http.Reque
 	return authn, true
 }
 
-func (s *Server) availableGatewayCandidates(ctx context.Context, gateway store.Gateway) []store.GatewayUpstream {
+type experimentalGatewayPolicy struct {
+	QPS         int
+	Concurrency int
+}
+
+func gatewayRateLimitPolicy(authn store.AuthenticatedGatewayKey) (string, int) {
+	key := authn.Key.ID
+	qps := authn.Key.QPSLimit
+	if qps <= 0 {
+		qps = authn.Gateway.QPSLimit
+	}
+	if limits, ok := experimentalGatewayLimits(authn.Gateway); ok {
+		key = "experimental:" + authn.Gateway.ID
+		qps = limits.QPS
+	}
+	return key, qps
+}
+
+func experimentalGatewayLimits(gateway store.Gateway) (experimentalGatewayPolicy, bool) {
+	policy := experimentalGatewayPolicy{QPS: 1, Concurrency: 2}
+	experimental := false
+	for _, upstream := range gateway.Upstreams {
+		method := strings.ToLower(strings.TrimSpace(stringFromAny(upstream.ProviderConfig["authMethod"])))
+		switch method {
+		case "codex_oauth":
+			experimental = true
+		case "deepseek_web_token", "opencli_browser":
+			experimental = true
+			policy.Concurrency = 1
+		}
+	}
+	if !experimental {
+		return experimentalGatewayPolicy{}, false
+	}
+	return policy, experimental
+}
+
+func gatewayUsesOpenCLIBrowser(gateway store.Gateway) bool {
+	for _, upstream := range gateway.Upstreams {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(upstream.ProviderConfig["authMethod"])), "opencli_browser") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) acquireExperimentalGatewaySlot(ctx context.Context, gateway store.Gateway) (func(), error) {
+	policy, ok := experimentalGatewayLimits(gateway)
+	if !ok {
+		return func() {}, nil
+	}
+	token, acquired, err := s.gatewayCache.AcquireConcurrency(ctx, gateway.ID, policy.Concurrency, time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, errExperimentalGatewayBusy
+	}
+	return func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.gatewayCache.ReleaseConcurrency(releaseCtx, gateway.ID, token); err != nil &&
+			!errors.Is(err, gatewaycache.ErrUnavailable) {
+			s.logger.Warn("release experimental gateway concurrency slot failed", "gateway_id", gateway.ID, "error", err)
+		}
+	}, nil
+}
+
+func (s *Server) availableGatewayCandidates(ctx context.Context, gateway store.Gateway, model ...string) []store.GatewayUpstream {
 	candidates := s.repo.PlanGatewayRoute(ctx, gateway)
+	requestedModel := ""
+	if len(model) > 0 {
+		requestedModel = strings.TrimSpace(model[0])
+	}
 	out := []store.GatewayUpstream{}
 	for _, upstream := range candidates {
+		if requestedModel != "" && strings.TrimSpace(upstream.Model) != requestedModel {
+			continue
+		}
 		if s.circuitOpen(upstream.ChannelID) {
 			continue
 		}
@@ -1249,6 +1375,19 @@ func (s *Server) availableGatewayCandidates(ctx context.Context, gateway store.G
 		s.logger.Warn("store redis route plan failed", "gateway_id", gateway.ID, "error", err)
 	}
 	return out
+}
+
+func gatewaySupportsModel(gateway store.Gateway, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	for _, upstream := range gateway.Upstreams {
+		if upstream.Enabled && strings.TrimSpace(upstream.Model) == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) recordGatewaySuccess(r *http.Request, authn store.AuthenticatedGatewayKey, upstream store.GatewayUpstream, model string, usage gatewayUsage, statusCode int, start time.Time, stream bool) {
@@ -1294,15 +1433,202 @@ func (s *Server) recordGatewayFailure(r *http.Request, authn store.Authenticated
 	})
 }
 
-func (s *Server) gatewayUpstreamAPIKey(ctx context.Context, authn store.AuthenticatedGatewayKey, upstream store.GatewayUpstream) (string, error) {
+type gatewayResolvedAuthorization struct {
+	APIKey   string
+	Material *connections.AuthMaterial
+}
+
+func (s *Server) gatewayUpstreamAuthorization(ctx context.Context, authn store.AuthenticatedGatewayKey, upstream store.GatewayUpstream) (gatewayResolvedAuthorization, error) {
 	cred, err := s.repo.GatewayChannelCredential(ctx, authn.Key.OrgID, upstream.ChannelID)
 	if err != nil {
-		return "", err
+		return gatewayResolvedAuthorization{}, err
+	}
+	if cred.ConnectionID != "" {
+		if s.credentialKeys == nil {
+			return gatewayResolvedAuthorization{}, errors.New("credential keyring is unavailable")
+		}
+		plain, err := s.credentialKeys.Decrypt(cred.OwnerUserID, cred.Provider, secretcrypto.CredentialEnvelope{
+			Ciphertext: cred.Ciphertext, Nonce: cred.Nonce, EncryptionKeyID: cred.EncryptionKeyID,
+			Fingerprint: cred.Fingerprint, FingerprintKeyID: cred.FingerprintKeyID,
+			Mask: cred.Mask, Algorithm: cred.Algorithm,
+		})
+		if err != nil {
+			return gatewayResolvedAuthorization{}, err
+		}
+		if cred.SecretType == "browser_connector" {
+			return gatewayResolvedAuthorization{}, errors.New("browser connector credential requires local task routing")
+		}
+		if cred.SecretType != "oauth_bundle" {
+			return gatewayResolvedAuthorization{APIKey: plain}, nil
+		}
+		if cred.AuthStatus == "reauth_required" || cred.AuthStatus == "disabled" || cred.AuthStatus == "deleted" {
+			return gatewayResolvedAuthorization{}, errors.New("connection authorization is inactive")
+		}
+		bundle, err := connections.ParseCredentialBundle(plain)
+		if err != nil {
+			return gatewayResolvedAuthorization{}, err
+		}
+		if !bundle.ExpiresAt.IsZero() && !bundle.ExpiresAt.After(time.Now().Add(s.cfg.AIOAuthRefreshSkew)) {
+			return s.refreshGatewayOAuthBundle(ctx, authn, upstream, cred, bundle)
+		}
+		adapter, ok := s.authRegistry.Adapter(cred.Provider, cred.AuthMethod)
+		if !ok {
+			return gatewayResolvedAuthorization{}, errors.New("connection authorization adapter is disabled")
+		}
+		material, err := adapter.ResolveAuthMaterial(ctx, bundle)
+		if err != nil {
+			return gatewayResolvedAuthorization{}, err
+		}
+		return gatewayResolvedAuthorization{Material: &material}, nil
 	}
 	if s.secretBox == nil {
-		return "", errors.New("encryption is unavailable")
+		return gatewayResolvedAuthorization{}, errors.New("encryption is unavailable")
 	}
-	return s.secretBox.Decrypt(cred.Ciphertext, cred.Nonce)
+	apiKey, err := s.secretBox.Decrypt(cred.Ciphertext, cred.Nonce)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	return gatewayResolvedAuthorization{APIKey: apiKey}, nil
+}
+
+func (s *Server) refreshGatewayUpstreamAuthorization(ctx context.Context, authn store.AuthenticatedGatewayKey, upstream store.GatewayUpstream, force bool) (gatewayResolvedAuthorization, error) {
+	cred, err := s.repo.GatewayChannelCredential(ctx, authn.Key.OrgID, upstream.ChannelID)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	if cred.ConnectionID == "" || cred.SecretType != "oauth_bundle" {
+		return gatewayResolvedAuthorization{}, errors.New("upstream does not use OAuth")
+	}
+	if s.credentialKeys == nil {
+		return gatewayResolvedAuthorization{}, errors.New("credential keyring is unavailable")
+	}
+	plain, err := s.credentialKeys.Decrypt(cred.OwnerUserID, cred.Provider, secretcrypto.CredentialEnvelope{
+		Ciphertext: cred.Ciphertext, Nonce: cred.Nonce, EncryptionKeyID: cred.EncryptionKeyID,
+		Fingerprint: cred.Fingerprint, FingerprintKeyID: cred.FingerprintKeyID,
+		Mask: cred.Mask, Algorithm: cred.Algorithm,
+	})
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	bundle, err := connections.ParseCredentialBundle(plain)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	if !force && bundle.ExpiresAt.After(time.Now().Add(s.cfg.AIOAuthRefreshSkew)) {
+		adapter, ok := s.authRegistry.Adapter(cred.Provider, cred.AuthMethod)
+		if !ok {
+			return gatewayResolvedAuthorization{}, errors.New("connection authorization adapter is disabled")
+		}
+		material, err := adapter.ResolveAuthMaterial(ctx, bundle)
+		return gatewayResolvedAuthorization{Material: &material}, err
+	}
+	return s.refreshGatewayOAuthBundle(ctx, authn, upstream, cred, bundle)
+}
+
+func (s *Server) refreshGatewayOAuthBundle(ctx context.Context, authn store.AuthenticatedGatewayKey, upstream store.GatewayUpstream, cred store.GatewayChannelCredential, bundle connections.CredentialBundle) (gatewayResolvedAuthorization, error) {
+	if s.authzStore == nil {
+		return gatewayResolvedAuthorization{}, errors.New("OAuth refresh coordination is unavailable")
+	}
+	lockToken, acquired, err := s.authzStore.AcquireRefreshLock(ctx, cred.ConnectionID, 30*time.Second)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	if !acquired {
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return gatewayResolvedAuthorization{}, ctx.Err()
+			case <-deadline.C:
+				return gatewayResolvedAuthorization{}, errors.New("OAuth refresh is still in progress")
+			case <-ticker.C:
+				current, readErr := s.repo.GatewayChannelCredential(ctx, authn.Key.OrgID, upstream.ChannelID)
+				if readErr != nil || current.Version == cred.Version {
+					continue
+				}
+				return s.resolveGatewayOAuthRecord(ctx, current)
+			}
+		}
+	}
+	defer func() {
+		_ = s.authzStore.ReleaseRefreshLock(context.Background(), cred.ConnectionID, lockToken)
+	}()
+	adapter, ok := s.authRegistry.Adapter(cred.Provider, cred.AuthMethod)
+	if !ok {
+		return gatewayResolvedAuthorization{}, errors.New("connection authorization adapter is disabled")
+	}
+	refreshed, err := adapter.Refresh(ctx, bundle)
+	if err != nil {
+		reauthRequired := errors.Is(err, connections.ErrCredentialReauth)
+		code := "refresh_temporary"
+		if reauthRequired {
+			code = "invalid_grant"
+		}
+		_ = s.repo.MarkOAuthRefreshFailure(ctx, cred.ConnectionID, cred.Version, reauthRequired, code, time.Now().Add(time.Minute))
+		return gatewayResolvedAuthorization{}, err
+	}
+	raw, err := refreshed.Marshal()
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	fingerprintSource := cred.AuthMethod + "\x00" + refreshed.ProviderSubject + "\x00" + refreshed.AccountID
+	encrypted, err := s.credentialKeys.EncryptWithFingerprint(cred.OwnerUserID, cred.Provider, raw, fingerprintSource)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	encrypted.Mask = cred.Mask
+	nextRefresh := refreshed.ExpiresAt.Add(-s.cfg.AIOAuthRefreshSkew)
+	if nextRefresh.Before(time.Now().Add(time.Minute)) {
+		nextRefresh = time.Now().Add(time.Minute)
+	}
+	if err := s.repo.UpdateOAuthConnectionSecret(ctx, cred.ConnectionID, cred.Version, store.AIConnectionSecret{
+		Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce, Mask: encrypted.Mask,
+		Fingerprint: encrypted.Fingerprint, EncryptionKeyID: encrypted.EncryptionKeyID,
+		FingerprintKeyID: encrypted.FingerprintKeyID, Algorithm: encrypted.Algorithm,
+		SubjectFingerprint: encrypted.Fingerprint, ExpiresAt: &refreshed.ExpiresAt,
+		NextRefreshAt: &nextRefresh,
+	}); err != nil {
+		if !store.IsOptimisticCredentialConflict(err) {
+			return gatewayResolvedAuthorization{}, err
+		}
+		current, readErr := s.repo.GatewayChannelCredential(ctx, authn.Key.OrgID, upstream.ChannelID)
+		if readErr != nil {
+			return gatewayResolvedAuthorization{}, readErr
+		}
+		return s.resolveGatewayOAuthRecord(ctx, current)
+	}
+	material, err := adapter.ResolveAuthMaterial(ctx, refreshed)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	return gatewayResolvedAuthorization{Material: &material}, nil
+}
+
+func (s *Server) resolveGatewayOAuthRecord(ctx context.Context, cred store.GatewayChannelCredential) (gatewayResolvedAuthorization, error) {
+	plain, err := s.credentialKeys.Decrypt(cred.OwnerUserID, cred.Provider, secretcrypto.CredentialEnvelope{
+		Ciphertext: cred.Ciphertext, Nonce: cred.Nonce, EncryptionKeyID: cred.EncryptionKeyID,
+		Fingerprint: cred.Fingerprint, FingerprintKeyID: cred.FingerprintKeyID,
+		Mask: cred.Mask, Algorithm: cred.Algorithm,
+	})
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	bundle, err := connections.ParseCredentialBundle(plain)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	adapter, ok := s.authRegistry.Adapter(cred.Provider, cred.AuthMethod)
+	if !ok {
+		return gatewayResolvedAuthorization{}, errors.New("connection authorization adapter is disabled")
+	}
+	material, err := adapter.ResolveAuthMaterial(ctx, bundle)
+	if err != nil {
+		return gatewayResolvedAuthorization{}, err
+	}
+	return gatewayResolvedAuthorization{Material: &material}, nil
 }
 
 func (s *Server) openCircuit(channelID string) {
@@ -1331,6 +1657,221 @@ func (s *Server) circuitOpen(channelID string) bool {
 		return false
 	}
 	return true
+}
+
+func isOpenCLIBrowserUpstream(upstream store.GatewayUpstream) bool {
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(upstream.ProviderConfig["authMethod"])), "opencli_browser")
+}
+
+func (s *Server) handleOpenCLIBrowserGatewayGeneration(
+	w http.ResponseWriter,
+	r *http.Request,
+	authn store.AuthenticatedGatewayKey,
+	upstream store.GatewayUpstream,
+	kind string,
+	raw []byte,
+	payload gatewayPayload,
+	start time.Time,
+) {
+	if !s.cfg.AIOpenCLIBrowserEnabled {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusServiceUnavailable, "browser_connector_disabled", start, payload.Stream)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_connector_disabled", "Personal browser connection is disabled")
+		return
+	}
+	var requestMap map[string]any
+	if err := json.Unmarshal(raw, &requestMap); err != nil {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusBadRequest, "invalid_json", start, payload.Stream)
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body")
+		return
+	}
+	prompt, err := browserconnector.PromptFromOpenAIRequest(kind, requestMap)
+	if err != nil {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusUnprocessableEntity, "browser_request_unsupported", start, payload.Stream)
+		writeError(w, r, http.StatusUnprocessableEntity, "browser_request_unsupported", err.Error())
+		return
+	}
+	credential, err := s.repo.GatewayChannelCredential(r.Context(), authn.Key.OrgID, upstream.ChannelID)
+	if err != nil || credential.AuthMethod != "opencli_browser" || credential.SecretType != "browser_connector" {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusServiceUnavailable, "browser_connection_unavailable", start, payload.Stream)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_connection_unavailable", "Personal browser connection is unavailable")
+		return
+	}
+	if !s.openCLIBrowserProviderEnabled(credential.Provider) {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusServiceUnavailable, "browser_provider_disabled", start, payload.Stream)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_provider_disabled", "This local browser provider is currently disabled")
+		return
+	}
+	if strings.TrimSpace(stringFromAny(upstream.ProviderConfig["identityBindingVersion"])) != openCLIBrowserIdentityBindingVersion ||
+		!browserconnector.IsValidAccountFingerprint(credential.SubjectFingerprint) {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusConflict, "browser_identity_reconnect_required", start, payload.Stream)
+		writeError(w, r, http.StatusConflict, "browser_identity_reconnect_required", "Reconnect this personal browser account to enable identity binding")
+		return
+	}
+	connectorID := strings.TrimSpace(stringFromAny(upstream.ProviderConfig["connectorId"]))
+	connector, err := s.repo.AIBrowserConnectorForOwner(r.Context(), credential.OwnerUserID, authn.Key.OrgID, connectorID)
+	if err != nil || !connector.Online || !containsBrowserCapability(connector.Capabilities, credential.Provider) {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusServiceUnavailable, "browser_connector_offline", start, payload.Stream)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_connector_offline", "Start the local connector and confirm the provider account is logged in")
+		return
+	}
+	riskDecision, err := s.repo.ReserveAIBrowserConnectionRequest(
+		r.Context(), credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID,
+		s.openCLIBrowserRiskPolicy(credential.Provider), time.Now(),
+	)
+	if err != nil {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusServiceUnavailable, "browser_risk_guard_unavailable", start, payload.Stream)
+		writeError(w, r, http.StatusServiceUnavailable, "browser_risk_guard_unavailable", "Personal browser protection is temporarily unavailable")
+		return
+	}
+	if !riskDecision.Allowed {
+		status, code, message := browserRiskRejection(riskDecision)
+		if riskDecision.RetryAt != nil {
+			seconds := int(time.Until(*riskDecision.RetryAt).Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, status, code, start, payload.Stream)
+		writeError(w, r, status, code, message)
+		return
+	}
+	taskTimeout := s.cfg.AIOpenCLIBrowserTaskTimeout
+	if taskTimeout <= 0 {
+		taskTimeout = 2 * time.Minute
+	}
+	task, err := s.repo.CreateAIBrowserTask(r.Context(), store.AIBrowserTaskInput{
+		ConnectorID: connector.ID, OwnerUserID: credential.OwnerUserID, OrgID: authn.Key.OrgID,
+		ConnectionID: credential.ConnectionID, Provider: credential.Provider,
+		Action: browserconnector.ActionAsk, Request: map[string]any{
+			"prompt":             prompt,
+			"accountFingerprint": credential.SubjectFingerprint,
+		},
+		ExpiresAt: time.Now().Add(taskTimeout),
+	})
+	if errors.Is(err, store.ErrAIBrowserConnectorBusy) {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusTooManyRequests, "browser_connector_busy", start, payload.Stream)
+		writeError(w, r, http.StatusTooManyRequests, "browser_connector_busy", "Personal browser connection is handling another request")
+		return
+	}
+	if err != nil {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusBadGateway, "browser_task_create_failed", start, payload.Stream)
+		writeError(w, r, http.StatusBadGateway, "browser_task_create_failed", "Could not start local browser task")
+		return
+	}
+	completed, err := s.waitForAIBrowserTask(r.Context(), credential.OwnerUserID, authn.Key.OrgID, task.ID, taskTimeout)
+	if err != nil {
+		riskCtx, riskCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = s.repo.RecordAIBrowserConnectionResult(
+			riskCtx, credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID,
+			false, "upstream_unavailable", time.Now(),
+		)
+		riskCancel()
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusGatewayTimeout, "browser_task_timeout", start, payload.Stream)
+		writeError(w, r, http.StatusGatewayTimeout, "browser_task_timeout", "Local browser task timed out")
+		return
+	}
+	if completed.Status != "completed" {
+		code := completed.ErrorCode
+		if code == "" {
+			code = "browser_task_failed"
+		}
+		message := completed.ErrorMessage
+		if message == "" {
+			message = "Local browser task failed; confirm the account is logged in"
+		}
+		_ = s.repo.SetAIBrowserConnectionAuthStatus(
+			r.Context(), credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID, false, code, message,
+		)
+		if riskState, riskErr := s.repo.RecordAIBrowserConnectionResult(
+			r.Context(), credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID,
+			false, code, time.Now(),
+		); riskErr != nil {
+			s.logger.Warn("record local browser risk failed", "connection_id", credential.ConnectionID, "error", riskErr)
+		} else {
+			_ = s.repo.WriteAudit(r.Context(), store.AuditEvent{
+				ActorType: "system", ActorID: credential.OwnerUserID, Action: "ai_browser_risk.transitioned",
+				ObjectType: "ai_connection", ObjectID: credential.ConnectionID, Result: "failed",
+				Metadata: map[string]any{
+					"provider": credential.Provider, "state": riskState.State,
+					"error_code": code, "cooldown_until": riskState.CooldownUntil,
+				},
+			})
+		}
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusBadGateway, code, start, payload.Stream)
+		writeError(w, r, http.StatusBadGateway, code, message)
+		return
+	}
+	content := strings.TrimSpace(stringFromAny(completed.Response["content"]))
+	if content == "" {
+		s.recordGatewayFailure(r, authn, upstream.ChannelID, payload.Model, http.StatusBadGateway, "browser_response_empty", start, payload.Stream)
+		writeError(w, r, http.StatusBadGateway, "browser_response_empty", "Local browser task returned an empty response")
+		return
+	}
+	usage := estimateUsage(payload)
+	usage.CompletionTokens = len([]rune(content))/4 + 1
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	usage.Estimated = true
+	_ = s.repo.SetAIBrowserConnectionAuthStatus(
+		r.Context(), credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID, true, "", "",
+	)
+	if _, riskErr := s.repo.RecordAIBrowserConnectionResult(
+		r.Context(), credential.OwnerUserID, authn.Key.OrgID, credential.ConnectionID,
+		true, "", time.Now(),
+	); riskErr != nil {
+		s.logger.Warn("record local browser success failed", "connection_id", credential.ConnectionID, "error", riskErr)
+	}
+	s.recordGatewaySuccess(r, authn, upstream, payload.Model, usage, http.StatusOK, start, false)
+	writeJSON(w, http.StatusOK, browserGatewayJSON(kind, payload.Model, content, usage, upstream.Name))
+}
+
+func browserRiskRejection(decision store.AIBrowserRiskDecision) (int, string, string) {
+	switch decision.Reason {
+	case "minimum_interval":
+		return http.StatusTooManyRequests, "browser_minimum_interval", "请求间隔过短，请稍后再试"
+	case "hourly_limit":
+		return http.StatusTooManyRequests, "browser_hourly_limit", "该网页账号已达到每小时安全额度"
+	case "daily_limit":
+		return http.StatusTooManyRequests, "browser_daily_limit", "该网页账号已达到每日安全额度"
+	case "cooldown":
+		return http.StatusTooManyRequests, "browser_account_cooling_down", "该网页账号正在冷却保护中"
+	case "reauth_required":
+		return http.StatusConflict, "browser_reauthorization_required", "请重新识别当前网页登录账号"
+	case "security_locked":
+		return http.StatusLocked, "browser_security_locked", "检测到服务商安全验证，该网页账号已锁定"
+	case "adapter_blocked":
+		return http.StatusServiceUnavailable, "browser_adapter_blocked", "网页适配器当前不兼容，请更新 OpenCLI 后重新验证"
+	case "paused":
+		return http.StatusLocked, "browser_account_paused", "该网页账号的个人中转已暂停"
+	default:
+		return http.StatusServiceUnavailable, "browser_risk_rejected", "该网页账号当前无法执行请求"
+	}
+}
+
+func browserGatewayJSON(kind string, model string, content string, usage gatewayUsage, upstreamName string) map[string]any {
+	now := time.Now()
+	if kind == "responses" {
+		return map[string]any{
+			"id": "resp_browser_" + now.Format("20060102150405"), "object": "response",
+			"created_at": now.Unix(), "model": model, "status": "completed",
+			"output": []map[string]any{{
+				"type": "message", "role": "assistant",
+				"content": []map[string]any{{"type": "output_text", "text": content}},
+			}},
+			"usage":  usage,
+			"tokhub": map[string]any{"upstream": upstreamName, "transport": "local_browser"},
+		}
+	}
+	return map[string]any{
+		"id": "chatcmpl_browser_" + now.Format("20060102150405"), "object": "chat.completion",
+		"created": now.Unix(), "model": model,
+		"choices": []map[string]any{{
+			"index": 0, "message": map[string]any{"role": "assistant", "content": content},
+			"finish_reason": "stop",
+		}},
+		"usage":  usage,
+		"tokhub": map[string]any{"upstream": upstreamName, "transport": "local_browser"},
+	}
 }
 
 func mockGatewayJSON(kind string, payload gatewayPayload, upstream store.GatewayUpstream) (map[string]any, gatewayUsage, error) {

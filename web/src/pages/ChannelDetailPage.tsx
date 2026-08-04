@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Footer } from "../components/Footer";
 import { PublicNav } from "../components/PublicNav";
-import { addFavorite, adminProbeNow, currentUser, disableAdminChannel, favoriteChannels, officialExperienceHref, publicChannel, publicChannelPath, publicChannelSeries, PublicChannel, PublicChannelDetail, removeFavorite, SeriesPoint, User } from "../lib/api";
+import { addFavorite, adminProbeNow, currentUser, disableAdminChannel, favoriteChannels, officialExperienceHref, publicChannel, publicChannelPath, PublicChannel, PublicChannelDetail, removeFavorite, TrendBucket, User } from "../lib/api";
+
+const detailRefreshIntervalMs = 10_000;
 
 const statusClass: Record<string, string> = {
   healthy: "b-green",
@@ -17,10 +19,11 @@ const statusClass: Record<string, string> = {
 export function ChannelDetailPage() {
   const { channelID = "ch_cc_claude" } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [detail, setDetail] = useState<PublicChannelDetail | null>(null);
-  const [series, setSeries] = useState<SeriesPoint[]>([]);
   const [user, setUser] = useState<User | null>(null);
-  const [range, setRange] = useState(30);
+  const [range, setRange] = useState(() => detailRange(searchParams.get("range")));
+  const detailRequestVersion = useRef(0);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState("");
   const [favoriteIDs, setFavoriteIDs] = useState<Set<string>>(new Set());
@@ -64,53 +67,58 @@ export function ChannelDetailPage() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError("");
-    Promise.all([publicChannel(channelID), publicChannelSeries(channelID, range)])
-      .then(([detailValue, seriesValue]) => {
-        if (!active) return;
+    async function refresh(showLoading: boolean) {
+      const requestVersion = ++detailRequestVersion.current;
+      if (showLoading) setLoading(true);
+      setError("");
+      try {
+        const detailValue = await publicChannel(channelID, range);
+        if (!active || requestVersion !== detailRequestVersion.current) return;
         setDetail(detailValue);
-        setSeries(seriesValue.items);
-      })
-      .catch((err: Error) => {
-        if (active) setError(err.message);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      } catch (err) {
+        if (active && requestVersion === detailRequestVersion.current) setError(err instanceof Error ? err.message : "通道详情加载失败");
+      } finally {
+        if (active && requestVersion === detailRequestVersion.current) setLoading(false);
+      }
+    }
+    void refresh(true);
+    const refreshTimer = window.setInterval(() => void refresh(false), detailRefreshIntervalMs);
     return () => {
       active = false;
+      detailRequestVersion.current += 1;
+      window.clearInterval(refreshTimer);
     };
   }, [channelID, range]);
 
   const current = detail?.channel;
   const canAdminManage = user?.role === "owner" || user?.role === "admin";
   const quote = useMemo(() => {
-    if (!series.length) return { change: 0, min: 0, max: 0 };
-    const latest = series[series.length - 1].healthIndex;
-    const previous = series[Math.max(series.length - 2, 0)].healthIndex;
+    const values = (current?.trendBuckets ?? []).map((item) => item.value).filter((value): value is number => value !== null);
+    if (!values.length) return { change: 0, min: 0, max: 0 };
+    const latest = values[values.length - 1];
+    const previous = values[Math.max(values.length - 2, 0)];
     return {
       change: +(latest - previous).toFixed(1),
-      min: Math.min(...series.map((item) => item.healthIndex)),
-      max: Math.max(...series.map((item) => item.healthIndex))
+      min: Math.min(...values),
+      max: Math.max(...values)
     };
-  }, [series]);
+  }, [current?.trendBuckets]);
   const officialHref = current ? officialExperienceHref(current) : "";
   const officialHost = officialHref ? hostLabel(officialHref) : "";
   const endpointHost = current ? hostLabel(current.endpoint) : "";
-  const detailPath = current ? publicChannelPath(current) : `/channels/${channelID}`;
-  const intro = current ? channelIntroContent(current, officialHost, endpointHost) : null;
+  const detailPath = current ? publicChannelPath(current, range) : `/channels/${channelID}?range=${encodeURIComponent(range)}`;
+  const intro = current ? channelIntroContent(current, officialHost, endpointHost, range) : null;
   const isFavorite = current ? favoriteIDs.has(current.id) : false;
 
   useEffect(() => {
     if (!current?.publicSlug || channelID === current.publicSlug) return;
-    navigate(publicChannelPath(current), { replace: true });
-  }, [channelID, current, navigate]);
+    navigate(publicChannelPath(current, range), { replace: true });
+  }, [channelID, current, navigate, range]);
 
   async function refreshDetail() {
-    const [detailValue, seriesValue] = await Promise.all([publicChannel(channelID), publicChannelSeries(channelID, range)]);
-    setDetail(detailValue);
-    setSeries(seriesValue.items);
+    const requestVersion = ++detailRequestVersion.current;
+    const detailValue = await publicChannel(channelID, range);
+    if (requestVersion === detailRequestVersion.current) setDetail(detailValue);
   }
 
   async function runProbeNow() {
@@ -195,8 +203,8 @@ export function ChannelDetailPage() {
             ) : <div className="dv-head"><h1>通道详情</h1></div>}
             <div className="detail-actions">
               <div className="seg">
-                {[7, 30, 90].map((item) => (
-                  <button className={range === item ? "active" : ""} onClick={() => setRange(item)} key={item}>{item}天</button>
+                {[["24", "近24h"], ["7", "近7天"], ["30", "近30天"], ["all", "全量"]].map(([value, label]) => (
+                  <button className={range === value ? "active" : ""} onClick={() => setRange(value)} key={value}>{label}</button>
                 ))}
               </div>
               {canAdminManage ? (
@@ -264,7 +272,7 @@ export function ChannelDetailPage() {
                       <span className={`badge ${statusClass[current.status] ?? "b-gray"} dot`}>{current.statusLabel}</span>
                     </div>
                     <div className="channel-rank-metrics">
-                      <span><b>{current.uptime24h.toFixed(1)}%</b><small>24h 可用率</small></span>
+                      <span><b>{current.uptime24h.toFixed(1)}%</b><small>{trendRangeLabel(range)}可用率</small></span>
                       <span><b>{current.successRate.toFixed(1)}%</b><small>真实成功率</small></span>
                       <span><b>{current.latencyP95Ms}ms</b><small>P95 延迟</small></span>
                     </div>
@@ -307,35 +315,34 @@ export function ChannelDetailPage() {
                   <div className="q-index">
                     {current.score.toFixed(1)}
                     <span className="chg" style={{ color: quote.change >= 0 ? "var(--green)" : "var(--red)" }}>
-                      {quote.change >= 0 ? "▲" : "▼"} {Math.abs(quote.change).toFixed(1)} 今日
+                      {quote.change >= 0 ? "▲" : "▼"} {Math.abs(quote.change).toFixed(1)} {trendChangeLabel(range)}
                     </span>
                   </div>
-                  <div className="q-sub">近{range}天最高 <b>{quote.max.toFixed(1)}</b> · 最低 <b>{quote.min.toFixed(1)}</b> · 综合链路与生成可用性</div>
+                  <div className="q-sub">{trendRangeLabel(range)}最高 <b>{quote.max.toFixed(1)}</b> · 最低 <b>{quote.min.toFixed(1)}</b> · 综合链路与生成可用性</div>
                 </div>
                 <div className="ticker">
                   <Ticker label="真实成功率" value={`${current.successRate.toFixed(1)}%`} />
                   <Ticker label="P95 延迟" value={`${current.latencyP95Ms}ms`} />
-                  <Ticker label="24h 可用率" value={`${current.uptime24h.toFixed(1)}%`} />
+                  <Ticker label={`${trendRangeLabel(range)}可用率`} value={`${current.uptime24h.toFixed(1)}%`} />
                   <Ticker label="今日成本" value={`$${current.costUsd.toFixed(3)}`} />
                   <Ticker label="探测 Tokens" value={compact(current.tokensUsed)} />
                   <Ticker label="状态" value={current.statusLabel} />
                 </div>
               </div>
               <div className="chart-head">
-                <div className="ct">可用率指数走势 <span className="pill">近{range}天</span></div>
+                <div className="ct">可用率指数走势 <span className="pill">{trendRangeLabel(range)}</span></div>
                 <div className="legend">
                   <span><i style={{ background: "var(--brand)" }} />可用率指数</span>
-                  <span><i style={{ background: "var(--green)" }} />真实成功率</span>
                 </div>
               </div>
-              <LineChart series={series} />
+              <LineChart buckets={current.trendBuckets ?? []} />
             </div>
 
             <div className="dkpis detail-dkpis">
-              <DKPI label="综合健康指数" value={current.score.toFixed(1)} hint={quote.change >= 0 ? "今日回升" : "今日回落"} />
-              <DKPI label="真实调用成功率" value={`${current.successRate.toFixed(1)}%`} hint="近30天窗口" />
-              <DKPI label="P95 真实延迟" value={`${current.latencyP95Ms}ms`} hint="最新真实探测窗口" />
-              <DKPI label="24h 可用率" value={`${current.uptime24h.toFixed(1)}%`} hint={current.uptime24h >= 99 ? "达标" : "低于 SLA"} />
+              <DKPI label="综合健康指数" value={current.score.toFixed(1)} hint={`${trendChangeLabel(range)}${quote.change >= 0 ? "回升" : "回落"}`} />
+              <DKPI label="真实调用成功率" value={`${current.successRate.toFixed(1)}%`} hint={`${trendRangeLabel(range)}窗口`} />
+              <DKPI label="P95 真实延迟" value={`${current.latencyP95Ms}ms`} hint={`${trendRangeLabel(range)}窗口`} />
+              <DKPI label={`${trendRangeLabel(range)}可用率`} value={`${current.uptime24h.toFixed(1)}%`} hint={current.uptime24h >= 99 ? "达标" : "低于 SLA"} />
               <DKPI label="连续正常时长" value="暂无足够数据" hint="等待事件聚合" />
               <DKPI label="今日探测成本" value={`$${current.costUsd.toFixed(3)}`} hint={`${compact(current.tokensUsed)} tokens`} />
             </div>
@@ -456,30 +463,47 @@ function scrollToTokHubIndex(event: MouseEvent<HTMLAnchorElement>) {
   history.replaceState(null, "", "#tokhub-index");
 }
 
-function channelIntroContent(channel: PublicChannel, officialHost: string, endpointHost: string) {
+function channelIntroContent(channel: PublicChannel, officialHost: string, endpointHost: string, range: string) {
   const title = channel.introTitle?.trim() || `${channel.provider} 官方介绍`;
   const summary = channel.introSummary?.trim() || "基于官网入口、通道配置和 TokHub 真实监控数据整理";
-  const body = channel.introBody?.trim() || fallbackChannelIntroBody(channel, officialHost, endpointHost);
+  const body = channel.introBody?.trim() || fallbackChannelIntroBody(channel, officialHost, endpointHost, range);
   return { title, summary, body };
 }
 
-function fallbackChannelIntroBody(channel: PublicChannel, officialHost: string, endpointHost: string) {
+function fallbackChannelIntroBody(channel: PublicChannel, officialHost: string, endpointHost: string, range: string) {
   const official = officialHost || "官方站点";
   const endpoint = endpointHost || "当前公开 Endpoint";
   return `**${channel.name}** 是 TokHub 收录的 ${channel.model} API 中转站服务商入口，当前关联服务商为 **${channel.provider}**，主要面向 ${channel.type.toUpperCase()} 兼容协议和 ${channel.upstreamModel} 上游模型场景。
 
 这个详情页把官网入口、模型信息、协议类型、Endpoint 域名和真实探测结果整理在同一处，方便开发者在注册或接入前先完成可用性判断。官方侧可通过 ${official} 进入注册或体验，TokHub 侧持续记录 L1 DNS/TCP/TLS/HTTP、L2 模型列表与鉴权、L3 最小生成调用。
 
-对于正在评估 ${endpoint} 的团队，可以先查看 ${channel.score} 分综合指数、${channel.uptime24h.toFixed(1)}% 24H 可用率、${channel.successRate.toFixed(1)}% 真实生成成功率和 ${channel.latencyP95Ms}ms P95 延迟，再决定是否进入官网注册、加入个人关注、配置私有 API Key 或放入企业网关候选。`;
+对于正在评估 ${endpoint} 的团队，可以先查看 ${channel.score} 分综合指数、${channel.uptime24h.toFixed(1)}% ${trendRangeLabel(range)}可用率、${channel.successRate.toFixed(1)}% 真实生成成功率和 ${channel.latencyP95Ms}ms P95 延迟，再决定是否进入官网注册、加入个人关注、配置私有 API Key 或放入企业网关候选。`;
 }
 
 function DKPI({ label, value, hint }: { label: string; value: string; hint: string }) {
   return <div className="dkpi"><div className="l">{label}</div><div className="v">{value}</div><div className="d">{hint}</div></div>;
 }
 
-function LineChart({ series }: { series: SeriesPoint[] }) {
-  const path = linePath(series.map((item) => item.healthIndex), 1000, 250);
-  const success = linePath(series.map((item) => item.successRate), 1000, 250);
+function trendRangeLabel(range: string) {
+  if (range === "24") return "近24h";
+  if (range === "7") return "近7天";
+  if (range === "all") return "全量";
+  return "近30天";
+}
+
+function detailRange(value: string | null) {
+  return value === "24" || value === "7" || value === "30" || value === "all" ? value : "30";
+}
+
+function trendChangeLabel(range: string) {
+  if (range === "24") return "较上一小时";
+  if (range === "7") return "较上个8小时";
+  if (range === "30") return "较昨日";
+  return "较上一时间桶";
+}
+
+function LineChart({ buckets }: { buckets: TrendBucket[] }) {
+  const path = linePath(buckets.map((item) => item.value), 1000, 250);
   return (
     <div className="chart-wrap">
       <svg viewBox="0 0 1000 250" preserveAspectRatio="none" className="detail-line">
@@ -489,8 +513,6 @@ function LineChart({ series }: { series: SeriesPoint[] }) {
             return <g key={value}><line x1="20" y1={y} x2="980" y2={y} /><text x="20" y={y - 4}>{value}</text></g>;
           })}
         </g>
-        <path d={`${path} L980,230 L20,230 Z`} className="area" />
-        <path d={success} className="success-line" />
         <path d={path} className="health-line" />
       </svg>
     </div>
@@ -549,15 +571,21 @@ function CostBars({ costs }: { costs: PublicChannelDetail["costs"] }) {
   );
 }
 
-function linePath(values: number[], width: number, height: number) {
+function linePath(values: Array<number | null>, width: number, height: number) {
   if (!values.length) return "";
   const max = 100;
   const min = 0;
-  return values
-    .map((value, index) => {
+  let previousWasEmpty = true;
+  return values.map((value, index) => {
+      if (value === null) {
+        previousWasEmpty = true;
+        return "";
+      }
       const x = 20 + (index / Math.max(values.length - 1, 1)) * (width - 40);
       const y = 20 + (1 - (value - min) / (max - min)) * (height - 40);
-      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+      const command = previousWasEmpty ? "M" : "L";
+      previousWasEmpty = false;
+      return `${command}${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
 }

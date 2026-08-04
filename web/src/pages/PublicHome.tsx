@@ -170,7 +170,9 @@ export function PublicHome() {
 
   useEffect(() => {
     let active = true;
+    let requestVersion = 0;
     async function refreshPublicData(showLoading: boolean) {
+      const version = ++requestVersion;
       if (showLoading) setLoading(true);
       setError("");
       try {
@@ -179,16 +181,16 @@ export function PublicHome() {
           providerRank(range),
           errorsSummary(range)
         ]);
-        if (!active) return;
+        if (!active || version !== requestVersion) return;
         setChannels(channelList.items);
         setTotal(channelList.total);
         setRank(rankList.items);
         setErrors(errorList.items);
         setPublicDataRange(range);
       } catch (err) {
-        if (active) setError(err instanceof Error ? err.message : "公开看板加载失败");
+        if (active && version === requestVersion) setError(err instanceof Error ? err.message : "公开看板加载失败");
       } finally {
-        if (active && showLoading) setLoading(false);
+        if (active && version === requestVersion) setLoading(false);
       }
     }
 
@@ -1065,7 +1067,7 @@ function ChannelPreviewDialog({ channel, range, isFavorite, onToggleFavorite, on
           <div className="module-title preview-section-title preview-section-title-tight">{trendHeaderLabel(range)}</div>
           <div className="preview-trend">
             <Spark values={trendValues(channel)} />
-            <div className="heat">{trendValues(channel).slice(-24).map((value, index) => <i className={heatClass(value)} key={`${value ?? "empty"}-${index}`} />)}</div>
+            <TrendBars values={trendValues(channel)} maxBars={trendBarCount(channel, range)} label={trendHeaderLabel(range)} maxWidth="100%" className="preview-trend-bars" />
           </div>
 
           <div className="module-title preview-section-title preview-section-title-spaced">真实探测日志 · L3</div>
@@ -1087,7 +1089,7 @@ function ChannelPreviewDialog({ channel, range, isFavorite, onToggleFavorite, on
                 访问官网
               </a>
             ) : null}
-            <a className="btn btn-primary btn-sm" href={publicChannelPath(channel)}>查看完整详情 →</a>
+            <a className="btn btn-primary btn-sm" href={publicChannelPath(channel, range)}>查看完整详情 →</a>
           </div>
         </div>
       </section>
@@ -1684,8 +1686,6 @@ function trendValues(row: { trend: number[]; trendBuckets?: TrendBucket[] }) {
 }
 
 function trendBarCount(row: { trend: number[]; trendBuckets?: TrendBucket[] }, range: string) {
-  // Keep seven-day data in a dense rail so it matches the visual language of the 30-day trend.
-  if (range === "7") return 30;
   if (row.trendBuckets?.length) return row.trendBuckets.length;
   if (range === "24") return 24;
   return 30;

@@ -1,6 +1,6 @@
 {
   "name": "tokhub",
-  "version": "0.1.0",
+  "version": "2.0.0-rc.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
+    "test": "go test -count=1 ./...",
     "test:e2e": "playwright test --reporter=line",
     "test:visual": "playwright test tests/*visual*.spec.ts --reporter=line",
     "test:security": "bash deploy/scripts/security-scan.sh",
@@ -17,11 +18,12 @@
     "frontend:ui-contract-check": "bash deploy/scripts/frontend-ui-contract-check.sh",
     "test:ops": "bash deploy/scripts/db-check.sh",
     "test:restore": "bash deploy/scripts/restore-drill.sh",
-    "test:preflight": "TOKHUB_SECRET_KEY=ci-production-sample-secret-key-32-bytes TOKHUB_ADMIN_PASSWORD=ci-production-admin-password bash deploy/scripts/preflight.sh --env-file .env.production.example",
+    "test:preflight": "TOKHUB_SECRET_KEY=ci-production-sample-secret-key-32-bytes TOKHUB_ADMIN_PASSWORD=ci-production-admin-password TOKHUB_CREDENTIAL_ACTIVE_KEY_ID=enc-ci TOKHUB_CREDENTIAL_ENCRYPTION_KEYS=enc-ci:ci-encryption-key-material-32-bytes-long TOKHUB_CREDENTIAL_ACTIVE_FINGERPRINT_KEY_ID=fp-ci TOKHUB_CREDENTIAL_FINGERPRINT_KEYS=fp-ci:ci-fingerprint-key-material-32-bytes-long bash deploy/scripts/preflight.sh --env-file .env.production.example",
     "test:smoke": "bash deploy/scripts/smoke.sh",
     "test:no-demo-smoke": "bash deploy/scripts/no-demo-smoke.sh",
     "test:fresh-prod": "bash deploy/scripts/fresh-prod-check.sh",
     "test:real-provider": "bash deploy/scripts/real-provider-check.sh",
+    "version:check": "bash deploy/scripts/version-check.sh",
     "release:check": "bash deploy/scripts/release-check.sh",
     "load:prepare": "node deploy/load/prepare-auth.js",
     "load:public": "node deploy/load/public-api.js",
@@ -41,10 +43,10 @@
     "@vitejs/plugin-react": "^5.1.2",
     "i18next": "^26.3.1",
     "i18next-browser-languagedetector": "^8.2.1",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "react-i18next": "^17.0.8",
-    "react-router-dom": "^7.10.1",
+    "react-router": "8.3.0",
     "read-excel-file": "^9.2.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.0"
@@ -56,6 +58,7 @@
     "@types/react-dom": "^19.2.3"
   },
   "overrides": {
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "postcss": "8.5.23"
   }
 }

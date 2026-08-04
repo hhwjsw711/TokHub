@@ -107,7 +107,7 @@ func publicChannelFilter(r *http.Request) store.ChannelFilter {
 
 func (s *Server) publicChannel(w http.ResponseWriter, r *http.Request) {
 	channelID := chi.URLParam(r, "channelID")
-	detail, err := s.repo.PublicChannel(r.Context(), channelID)
+	detail, err := s.repo.PublicChannelForRange(r.Context(), channelID, publicRangeValue(r))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, r, http.StatusNotFound, "channel_not_found", "Channel not found")
 		return

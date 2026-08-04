@@ -12,6 +12,9 @@ import (
 
 	"tokhub/internal/api"
 	"tokhub/internal/auth"
+	"tokhub/internal/buildinfo"
+	"tokhub/internal/connections"
+	secretcrypto "tokhub/internal/crypto"
 	"tokhub/internal/events"
 	"tokhub/internal/gateway"
 	"tokhub/internal/observability"
@@ -27,6 +30,7 @@ func main() {
 
 	cfg := api.LoadConfig()
 	logger := observability.NewLogger(cfg.Env)
+	logger.Info("tokhub starting", "version", buildinfo.Version, "role", cfg.Role)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -62,7 +66,96 @@ func main() {
 	}
 
 	repo := store.NewRepository(db)
+	if shouldExpireAIQuickRelayReveals(cfg.Role) {
+		go func() {
+			expire := func() {
+				expired, err := repo.ExpireAIQuickRelayReveals(ctx)
+				if err != nil {
+					logger.Warn("expire AI quick relay reveals", "error", err)
+					return
+				}
+				if expired > 0 {
+					logger.Info("expired AI quick relay reveals", "count", expired)
+				}
+			}
+			expire()
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					expire()
+				}
+			}
+		}()
+	}
+	if shouldMaintainAIBrowserTasks(cfg.Role) {
+		go func() {
+			maintain := func() {
+				changed, err := repo.MaintainAIBrowserTasks(ctx, 10*time.Minute)
+				if err != nil {
+					logger.Warn("maintain local browser tasks", "error", err)
+					return
+				}
+				if changed > 0 {
+					logger.Info("maintained local browser task payloads", "count", changed)
+				}
+			}
+			maintain()
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					maintain()
+				}
+			}
+		}()
+	}
 	authSvc := auth.NewService(repo, cfg.SecretKey, cfg.SessionSecure, logger)
+	var credentialRefreshRuntime *events.CredentialRefreshRuntime
+	if cfg.AIWebAuthEnabled && shouldRunCredentialRefresh(cfg.Role) {
+		keyring, keyringErr := secretcrypto.NewCredentialKeyring(secretcrypto.CredentialKeyringConfig{
+			ActiveEncryptionKeyID:  cfg.CredentialActiveKeyID,
+			EncryptionKeys:         cfg.CredentialEncryptionKeys,
+			ActiveFingerprintKeyID: cfg.CredentialActiveFingerprintKeyID,
+			FingerprintKeys:        cfg.CredentialFingerprintKeys,
+		})
+		if keyringErr != nil {
+			logger.Error("OAuth refresh credential keyring unavailable", "error", keyringErr)
+		} else {
+			registry := connections.NewAuthRegistry(connections.AdapterConfig{
+				WebAuthEnabled:           cfg.AIWebAuthEnabled,
+				GeminiOAuthEnabled:       cfg.AIGeminiOAuthEnabled,
+				DeepSeekGuidedEnabled:    cfg.AIDeepSeekGuidedEnabled,
+				DeepSeekWebExperimental:  cfg.AIDeepSeekWebExperimental,
+				DeepSeekWebBridgeURL:     cfg.AIDeepSeekWebBridgeURL,
+				DeepSeekWebBridgeAck:     cfg.AIDeepSeekWebBridgeAck,
+				ChatGPTCodexExperimental: cfg.AIChatGPTCodexExperimental,
+				ExperimentalBridgeAck:    cfg.AIExperimentalBridgeAck,
+				PublicURL:                cfg.PublicURL,
+				GoogleClientID:           cfg.GoogleOAuthClientID,
+				GoogleClientSecret:       cfg.GoogleOAuthClientSecret,
+				GoogleProjectID:          cfg.GoogleOAuthProjectID,
+			})
+			credentialRefreshRuntime, err = events.StartCredentialRefreshRuntime(ctx, repo, keyring, registry, events.CredentialRefreshConfig{
+				RedisURL: cfg.RedisURL, Workers: cfg.AIOAuthRefreshWorkers,
+				ProviderConcurrency: cfg.AIOAuthProviderConcurrency, ProviderQPS: cfg.AIOAuthProviderQPS,
+				AttemptTimeout: cfg.AIOAuthRefreshAttemptTimeout,
+				RefreshSkew:    cfg.AIOAuthRefreshSkew, Interval: time.Minute,
+			}, logger)
+			if err != nil {
+				logger.Warn("OAuth credential refresh runtime unavailable", "error", err)
+			} else {
+				defer credentialRefreshRuntime.Close()
+				logger.Info("OAuth credential refresh runtime started", "workers", cfg.AIOAuthRefreshWorkers)
+			}
+		}
+	}
 	probeRunner, err := prober.NewRunnerWithSecretKey(repo, logger, cfg.SeedMode != "prod", cfg.SecretKey)
 	if err != nil {
 		logger.Error("create probe runner", "error", err)
@@ -93,7 +186,7 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      310 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -115,6 +208,18 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
+func shouldExpireAIQuickRelayReveals(role string) bool {
+	return role == "all" || role == "worker"
+}
+
+func shouldMaintainAIBrowserTasks(role string) bool {
+	return role == "all" || role == "worker"
+}
+
+func shouldRunCredentialRefresh(role string) bool {
+	return role == "all" || role == "worker"
+}
+
 func runHealthcheck() {
 	port := os.Getenv("TOKHUB_PORT")
 	if port == "" {
@@ -123,7 +228,7 @@ func runHealthcheck() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/readyz", nil)
 	if err != nil {
 		os.Exit(1)
 	}

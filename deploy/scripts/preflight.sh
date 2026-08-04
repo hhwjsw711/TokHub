@@ -73,6 +73,63 @@ if [[ "$secret_value" == "dev-only-change-this-secret-key-32b" || "$secret_value
   fail "TOKHUB_SECRET_KEY must be a non-default secret with at least 32 characters"
 fi
 
+validate_credential_keyring() {
+  local active_id="$1"
+  local raw_keys="$2"
+  local label="$3"
+  local found=0
+  local pair key_id key_secret
+  local -a pairs=()
+  IFS=',' read -ra pairs <<< "$raw_keys"
+  for pair in "${pairs[@]}"; do
+    key_id="${pair%%:*}"
+    key_secret="${pair#*:}"
+    if [[ "$pair" != *:* || -z "$key_id" || ! "$key_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      fail "$label contains an invalid key-id:secret entry"
+      continue
+    fi
+    if [[ ${#key_secret} -lt 32 || "$key_secret" == replace-with-* ]]; then
+      fail "$label key $key_id must use a non-placeholder secret with at least 32 characters"
+    fi
+    if [[ "$key_id" == "$active_id" ]]; then
+      found=1
+    fi
+  done
+  if [[ -z "$active_id" || "$found" -ne 1 ]]; then
+    fail "$label must contain its configured active key id"
+  fi
+}
+
+reject_shared_credential_key_material() {
+  local encryption_keys="$1"
+  local fingerprint_keys="$2"
+  local encryption_pair fingerprint_pair encryption_secret fingerprint_secret
+  local -a encryption_pairs=()
+  local -a fingerprint_pairs=()
+  IFS=',' read -ra encryption_pairs <<< "$encryption_keys"
+  IFS=',' read -ra fingerprint_pairs <<< "$fingerprint_keys"
+  for encryption_pair in "${encryption_pairs[@]}"; do
+    encryption_secret="${encryption_pair#*:}"
+    for fingerprint_pair in "${fingerprint_pairs[@]}"; do
+      fingerprint_secret="${fingerprint_pair#*:}"
+      if [[ -n "$encryption_secret" && "$encryption_secret" == "$fingerprint_secret" ]]; then
+        fail "credential encryption and fingerprint keyrings must use different secret material"
+        return
+      fi
+    done
+  done
+}
+
+if [[ -z "${TOKHUB_CREDENTIAL_ENCRYPTION_KEYS:-}" && -z "${TOKHUB_CREDENTIAL_FINGERPRINT_KEYS:-}" ]]; then
+  fail "dedicated credential encryption and fingerprint keyrings are required in production"
+elif [[ -z "${TOKHUB_CREDENTIAL_ENCRYPTION_KEYS:-}" || -z "${TOKHUB_CREDENTIAL_FINGERPRINT_KEYS:-}" ]]; then
+  fail "both credential encryption and fingerprint keyrings must be configured together"
+else
+  validate_credential_keyring "${TOKHUB_CREDENTIAL_ACTIVE_KEY_ID:-}" "${TOKHUB_CREDENTIAL_ENCRYPTION_KEYS}" "TOKHUB_CREDENTIAL_ENCRYPTION_KEYS"
+  validate_credential_keyring "${TOKHUB_CREDENTIAL_ACTIVE_FINGERPRINT_KEY_ID:-}" "${TOKHUB_CREDENTIAL_FINGERPRINT_KEYS}" "TOKHUB_CREDENTIAL_FINGERPRINT_KEYS"
+  reject_shared_credential_key_material "${TOKHUB_CREDENTIAL_ENCRYPTION_KEYS}" "${TOKHUB_CREDENTIAL_FINGERPRINT_KEYS}"
+fi
+
 if [[ "$admin_password_value" == "admin@tokhub.local" || "$admin_password_value" == "ChangeMe123!" || "$admin_password_value" == "replace-with-a-long-random-admin-password" || ${#admin_password_value} -lt 12 ]]; then
   fail "TOKHUB_ADMIN_PASSWORD must be a non-default value with at least 12 characters"
 fi
@@ -91,6 +148,36 @@ fi
 
 if [[ "${TOKHUB_UPSTREAM_MODE:-real}" == "mock" ]]; then
   fail "TOKHUB_UPSTREAM_MODE must not be mock in production"
+fi
+
+if [[ "${TOKHUB_AI_WEB_AUTH_ENABLED:-false}" == "true" ]]; then
+  if [[ "${TOKHUB_AI_GEMINI_OAUTH_ENABLED:-false}" == "true" ]]; then
+    require_env TOKHUB_GOOGLE_OAUTH_CLIENT_ID
+    require_env TOKHUB_GOOGLE_OAUTH_CLIENT_SECRET
+    if [[ -n "${TOKHUB_GOOGLE_OAUTH_PROJECT_ID:-}" &&
+      ! "${TOKHUB_GOOGLE_OAUTH_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+      fail "TOKHUB_GOOGLE_OAUTH_PROJECT_ID must be a valid 6-30 character Google Cloud project ID"
+    fi
+  fi
+  if [[ "${TOKHUB_AI_CHATGPT_CODEX_EXPERIMENTAL:-false}" == "true" &&
+    "${TOKHUB_AI_EXPERIMENTAL_BRIDGE_ACK:-}" != "I_ACCEPT_CHATGPT_CODEX_EXPERIMENTAL_RISK" ]]; then
+    fail "ChatGPT Codex experimental mode requires the exact risk acknowledgement"
+  fi
+  if [[ "${TOKHUB_AI_DEEPSEEK_WEB_EXPERIMENTAL:-false}" == "true" ]]; then
+    require_env TOKHUB_AI_DEEPSEEK_WEB_BRIDGE_URL
+    require_env TOKHUB_DEEPSEEK_WEB_BRIDGE_ADMIN_KEY
+    if [[ "${TOKHUB_AI_DEEPSEEK_WEB_ACK:-}" != "I_ACCEPT_DEEPSEEK_WEB_SESSION_EXPERIMENTAL_RISK" ]]; then
+      fail "DeepSeek web-session experimental mode requires the exact risk acknowledgement"
+    fi
+    if [[ "${TOKHUB_DEEPSEEK_WEB_BRIDGE_ADMIN_KEY:-}" == "replace-with-a-long-random-bridge-admin-key" ||
+      ${#TOKHUB_DEEPSEEK_WEB_BRIDGE_ADMIN_KEY} -lt 24 ]]; then
+      fail "TOKHUB_DEEPSEEK_WEB_BRIDGE_ADMIN_KEY must be a non-default value with at least 24 characters"
+    fi
+    if [[ ! "${TOKHUB_AI_DEEPSEEK_WEB_BRIDGE_URL}" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?/?$ &&
+      ! "${TOKHUB_AI_DEEPSEEK_WEB_BRIDGE_URL}" =~ ^http://[A-Za-z0-9][A-Za-z0-9-]*(:[0-9]+)?/?$ ]]; then
+      fail "DeepSeek web bridge must use HTTPS or a single-label internal HTTP service name"
+    fi
+  fi
 fi
 
 if [[ "${REQUIRE_SMTP:-0}" == "1" && -z "${SMTP_URL:-}" ]]; then

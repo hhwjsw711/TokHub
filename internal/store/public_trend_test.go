@@ -26,9 +26,9 @@ func TestNormalizePublicChannelRange(t *testing.T) {
 			predicate:  "ss.sampled_at >= now() - interval '24 hours' and ss.sampled_at < now()",
 			shouldFind: "generate_series(now() - interval '24 hours', now() - interval '1 hour', interval '1 hour')",
 		},
-		{name: "7 days uses daily buckets", value: "7", active: true, days: 7, shouldFind: "current_date - (6 * interval '1 day')"},
-		{name: "30 days uses daily buckets", value: "30", active: true, days: 30, shouldFind: "current_date - (29 * interval '1 day')"},
-		{name: "all uses compressed all-time buckets", value: "all", active: true, all: true, predicate: "true", shouldFind: "ntile(30)"},
+		{name: "7 days uses three rolling time buckets per day", value: "7", active: true, days: 7, predicate: "ss.sampled_at >= now() - interval '7 days' and ss.sampled_at < now()", shouldFind: "generate_series(now() - interval '7 days', now() - interval '8 hours', interval '8 hours')"},
+		{name: "30 days uses a rolling daily window", value: "30", active: true, days: 30, predicate: "ss.sampled_at >= now() - interval '30 days' and ss.sampled_at < now()", shouldFind: "generate_series(now() - interval '30 days', now() - interval '1 day', interval '1 day')"},
+		{name: "all groups each channel scan into shared public time buckets", value: "all", active: true, all: true, predicate: "true", shouldFind: "all_bounds.first_at"},
 		{name: "unsupported preserves legacy query", value: "14", active: false},
 	}
 	for _, tt := range tests {

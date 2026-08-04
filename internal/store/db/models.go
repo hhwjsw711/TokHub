@@ -33,6 +33,182 @@ type AdminAgentToken struct {
 	CreatedAt   time.Time
 }
 
+type AiAuthorizationAttempt struct {
+	ID             string
+	OwnerUserID    string
+	OrgID          string
+	Provider       string
+	AuthMethod     string
+	Status         string
+	CompletionMode string
+	ConnectionID   sql.NullString
+	ErrorCode      string
+	ErrorMessage   string
+	StartedAt      time.Time
+	CompletedAt    sql.NullTime
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type AiBrowserAccountRisk struct {
+	OwnerUserID              string
+	OrgID                    string
+	Provider                 string
+	AccountKey               string
+	State                    string
+	CooldownUntil            sql.NullTime
+	HourWindowStartedAt      time.Time
+	DayWindowStartedAt       time.Time
+	RateLimitWindowStartedAt time.Time
+	RequestsHour             int32
+	RequestsDay              int32
+	RateLimitEvents          int32
+	ConsecutiveFailures      int32
+	LastRequestAt            sql.NullTime
+	LastSuccessAt            sql.NullTime
+	LastErrorAt              sql.NullTime
+	LastErrorCode            string
+	LastChallengeAt          sql.NullTime
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
+}
+
+type AiBrowserConnector struct {
+	ID               string
+	OwnerUserID      string
+	OrgID            string
+	DisplayName      string
+	Status           string
+	PairingHash      string
+	PairingExpiresAt sql.NullTime
+	TokenHash        string
+	TokenPrefix      string
+	OpencliVersion   string
+	ExtensionVersion string
+	CapabilitiesJson json.RawMessage
+	LastSeenAt       sql.NullTime
+	PairedAt         sql.NullTime
+	RevokedAt        sql.NullTime
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type AiBrowserTask struct {
+	ID             string
+	ConnectorID    string
+	OwnerUserID    string
+	OrgID          string
+	ConnectionID   sql.NullString
+	Provider       string
+	Action         string
+	RequestJson    json.RawMessage
+	ResponseJson   json.RawMessage
+	Status         string
+	LeaseHash      string
+	LeaseExpiresAt sql.NullTime
+	ErrorCode      string
+	ErrorMessage   string
+	ExpiresAt      time.Time
+	ClaimedAt      sql.NullTime
+	CompletedAt    sql.NullTime
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type AiConnection struct {
+	ID                     string
+	OwnerUserID            string
+	OrgID                  string
+	Provider               string
+	ProductLine            string
+	Region                 string
+	WorkspaceID            string
+	AuthMethod             string
+	Protocol               string
+	AdapterType            string
+	Endpoint               string
+	ProviderConfig         json.RawMessage
+	DisplayName            string
+	Status                 string
+	ValidationStage        string
+	ValidationLatencyMs    int32
+	ModelCount             int32
+	LastErrorCode          string
+	LastErrorMessage       string
+	LastValidatedAt        sql.NullTime
+	PolicyVersion          string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	DeletedAt              sql.NullTime
+	AuthStatus             string
+	SharingScope           string
+	RiskLevel              string
+	ProviderAdapterVersion string
+	TermsAckVersion        string
+	AccountMask            string
+}
+
+type AiConnectionModel struct {
+	ID                  string
+	ConnectionID        string
+	ProviderModelID     string
+	DisplayName         string
+	Enabled             bool
+	VerificationStatus  string
+	ValidationLatencyMs int32
+	LastErrorCode       string
+	LastErrorMessage    string
+	LastValidatedAt     sql.NullTime
+	CapabilitiesJson    json.RawMessage
+	RouteChannelID      sql.NullString
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type AiConnectionSecret struct {
+	ConnectionID         string
+	Ciphertext           string
+	Nonce                string
+	Mask                 string
+	Fingerprint          string
+	EncryptionKeyID      string
+	FingerprintKeyID     string
+	Algorithm            string
+	Version              int32
+	RotatedAt            time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	SecretType           string
+	PayloadFormat        string
+	SubjectFingerprint   string
+	ExpiresAt            sql.NullTime
+	NextRefreshAt        sql.NullTime
+	LastRefreshedAt      sql.NullTime
+	RefreshFailures      int32
+	LastRefreshErrorCode string
+}
+
+type AiQuickRelayRequest struct {
+	ID                     string
+	OwnerUserID            string
+	OrgID                  string
+	IdempotencyKey         string
+	RequestHash            string
+	ConnectionID           string
+	GatewayID              sql.NullString
+	GatewayKeyID           sql.NullString
+	RevealCiphertext       string
+	RevealNonce            string
+	RevealEncryptionKeyID  string
+	RevealFingerprint      string
+	RevealFingerprintKeyID string
+	RevealMask             string
+	Status                 string
+	ExpiresAt              time.Time
+	CreatedAt              time.Time
+}
+
 type AlertConfigState struct {
 	Scope                 string
 	OrgID                 string
@@ -103,38 +279,41 @@ type AuthSession struct {
 }
 
 type Channel struct {
-	ID              string
-	OwnerType       string
-	OwnerID         sql.NullString
-	Name            string
-	Provider        string
-	Type            string
-	Model           string
-	UpstreamModel   string
-	Endpoint        string
-	Status          string
-	Score           int32
-	ProbeDaily      int32
-	ProbesUsedToday int32
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	ProbeResetDate  time.Time
-	DataOrigin      string
-	PublicVisible   bool
-	GatewayEnabled  bool
-	DisabledAt      sql.NullTime
-	DeletedAt       sql.NullTime
-	ProviderConfig  json.RawMessage
-	OfficialSiteUrl string
-	OrgID           sql.NullString
-	PublicSlug      string
-	IntroTitle      string
-	IntroSummary    string
-	IntroBody       string
-	IntroHighlights json.RawMessage
-	LogoUrl         string
-	IntroSourceUrl  string
-	IntroUpdatedAt  sql.NullTime
+	ID                  string
+	OwnerType           string
+	OwnerID             sql.NullString
+	Name                string
+	Provider            string
+	Type                string
+	Model               string
+	UpstreamModel       string
+	Endpoint            string
+	Status              string
+	Score               int32
+	ProbeDaily          int32
+	ProbesUsedToday     int32
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	ProbeResetDate      time.Time
+	DataOrigin          string
+	PublicVisible       bool
+	GatewayEnabled      bool
+	DisabledAt          sql.NullTime
+	DeletedAt           sql.NullTime
+	ProviderConfig      json.RawMessage
+	OfficialSiteUrl     string
+	OrgID               sql.NullString
+	PublicSlug          string
+	IntroTitle          string
+	IntroSummary        string
+	IntroBody           string
+	IntroHighlights     json.RawMessage
+	LogoUrl             string
+	IntroSourceUrl      string
+	IntroUpdatedAt      sql.NullTime
+	AiConnectionID      sql.NullString
+	AiConnectionModelID sql.NullString
+	ManagedSource       string
 }
 
 type ChannelCredential struct {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"tokhub/internal/auth"
+	"tokhub/internal/buildinfo"
+	"tokhub/internal/connections"
 	secretcrypto "tokhub/internal/crypto"
 	gatewaycache "tokhub/internal/gateway"
 	"tokhub/internal/prober"
@@ -27,8 +30,11 @@ type Server struct {
 	repo           *store.Repository
 	auth           *auth.Service
 	secretBox      *secretcrypto.SecretBox
+	credentialKeys *secretcrypto.CredentialKeyring
 	gatewayCache   *gatewaycache.Cache
 	upstreamClient *gatewaycache.UpstreamClient
+	authRegistry   *connections.AuthRegistry
+	authzStore     connections.AuthorizationStore
 	probeRunner    *prober.Runner
 	logger         *slog.Logger
 	publicLimiter  *rateLimiter
@@ -53,13 +59,46 @@ func NewServer(cfg Config, repo *store.Repository, authSvc *auth.Service, probeR
 	if err != nil {
 		logger.Error("secret box unavailable", "error", err)
 	}
+	credentialKeys, err := secretcrypto.NewCredentialKeyring(secretcrypto.CredentialKeyringConfig{
+		ActiveEncryptionKeyID:  cfg.CredentialActiveKeyID,
+		EncryptionKeys:         cfg.CredentialEncryptionKeys,
+		ActiveFingerprintKeyID: cfg.CredentialActiveFingerprintKeyID,
+		FingerprintKeys:        cfg.CredentialFingerprintKeys,
+	})
+	if err != nil {
+		logger.Error("credential keyring unavailable", "error", err)
+	}
+	authRegistry := connections.NewAuthRegistry(connections.AdapterConfig{
+		WebAuthEnabled:           cfg.AIWebAuthEnabled,
+		GeminiOAuthEnabled:       cfg.AIGeminiOAuthEnabled,
+		DeepSeekGuidedEnabled:    cfg.AIDeepSeekGuidedEnabled,
+		DeepSeekWebExperimental:  cfg.AIDeepSeekWebExperimental,
+		DeepSeekWebBridgeURL:     cfg.AIDeepSeekWebBridgeURL,
+		DeepSeekWebBridgeAck:     cfg.AIDeepSeekWebBridgeAck,
+		ChatGPTCodexExperimental: cfg.AIChatGPTCodexExperimental,
+		ExperimentalBridgeAck:    cfg.AIExperimentalBridgeAck,
+		PublicURL:                cfg.PublicURL,
+		GoogleClientID:           cfg.GoogleOAuthClientID,
+		GoogleClientSecret:       cfg.GoogleOAuthClientSecret,
+		GoogleProjectID:          cfg.GoogleOAuthProjectID,
+	})
+	var authzStore connections.AuthorizationStore
+	if cfg.AIWebAuthEnabled {
+		authzStore, err = connections.NewRedisAuthorizationStore(context.Background(), cfg.RedisURL)
+		if err != nil {
+			logger.Warn("AI authorization transaction store unavailable", "error", err)
+		}
+	}
 	s := &Server{
 		cfg:            cfg,
 		repo:           repo,
 		auth:           authSvc,
 		secretBox:      secretBox,
+		credentialKeys: credentialKeys,
 		gatewayCache:   gatewayCache,
 		upstreamClient: gatewaycache.NewUpstreamClient(),
+		authRegistry:   authRegistry,
+		authzStore:     authzStore,
 		probeRunner:    probeRunner,
 		logger:         logger,
 		publicLimiter:  &rateLimiter{buckets: map[string]rateBucket{}},
@@ -115,6 +154,36 @@ func NewServer(cfg Config, repo *store.Repository, authSvc *auth.Service, probeR
 			mr.Delete("/private-channels/{channelID}", s.deletePrivateChannel)
 			mr.Post("/private-channels/{channelID}/probe-now", s.probePrivateChannelNow)
 			mr.Post("/private-channels/{channelID}/validate", s.validatePrivateChannel)
+			mr.Get("/ai-connection-providers", s.meAIConnectionProviders)
+			mr.Post("/ai-auth/step-up", s.stepUpAIConnectionAuth)
+			mr.Post("/ai-authorizations", s.startAIConnectionAuthorization)
+			mr.Get("/ai-authorizations/google/callback", s.googleAIAuthorizationCallback)
+			mr.Get("/ai-authorizations/{authorizationID}", s.aiConnectionAuthorizationStatus)
+			mr.Post("/ai-authorizations/{authorizationID}/complete", s.completeAIConnectionAuthorization)
+			mr.Delete("/ai-authorizations/{authorizationID}", s.cancelAIConnectionAuthorization)
+			mr.Get("/ai-connections", s.meAIConnections)
+			mr.Post("/ai-connections", s.createAIConnection)
+			mr.Get("/ai-browser-connectors", s.meAIBrowserConnectors)
+			mr.Post("/ai-browser-connectors", s.createAIBrowserConnector)
+			mr.Delete("/ai-browser-connectors/{connectorID}", s.revokeAIBrowserConnector)
+			mr.Post("/ai-browser-connections", s.createAIBrowserConnection)
+			mr.Get("/ai-connections/{connectionID}", s.meAIConnection)
+			mr.Post("/ai-connections/{connectionID}/validate", s.validateAIConnection)
+			mr.Get("/ai-connections/{connectionID}/browser-risk", s.meAIBrowserConnectionRisk)
+			mr.Post("/ai-connections/{connectionID}/browser-risk/pause", s.pauseAIBrowserConnection)
+			mr.Post("/ai-connections/{connectionID}/browser-risk/resume", s.resumeAIBrowserConnection)
+			mr.Post("/ai-connections/{connectionID}/rotate", s.rotateAIConnectionCredential)
+			mr.Post("/ai-connections/{connectionID}/quick-relay", s.quickCreateAIConnectionRelay)
+			mr.Post("/ai-connections/{connectionID}/reauthorize", s.startAIConnectionAuthorization)
+			mr.Post("/ai-connections/{connectionID}/disconnect", s.disconnectAIConnection)
+			mr.Delete("/ai-connections/{connectionID}", s.deleteAIConnection)
+		})
+		api.Route("/ai-browser-connectors", func(br chi.Router) {
+			br.Use(s.browserConnectorRateLimit)
+			br.Post("/pair", s.pairAIBrowserConnector)
+			br.Post("/heartbeat", s.heartbeatAIBrowserConnector)
+			br.Post("/tasks/claim", s.claimAIBrowserConnectorTask)
+			br.Post("/tasks/{taskID}/complete", s.completeAIBrowserConnectorTask)
 		})
 		api.Route("/public", func(pr chi.Router) {
 			pr.Use(s.publicRateLimit)
@@ -365,7 +434,8 @@ func requestOrigin(r *http.Request) string {
 func (s *Server) csrf(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		publicRecommendClick := r.Method == http.MethodPost && r.URL.Path == "/api/public/recommend/click"
-		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions || !strings.HasPrefix(r.URL.Path, "/api/") || publicRecommendClick {
+		localBrowserConnector := strings.HasPrefix(r.URL.Path, "/api/ai-browser-connectors/")
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions || !strings.HasPrefix(r.URL.Path, "/api/") || publicRecommendClick || localBrowserConnector {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -390,6 +460,16 @@ func (s *Server) authRateLimit(next http.Handler) http.Handler {
 		}
 		if !s.allowRate(s.authLimiter, clientIP(r), 30, time.Minute) {
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many auth requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) browserConnectorRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowRate(s.authLimiter, "browser-connector-device:"+clientIP(r), 600, time.Minute) {
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many local browser connector requests")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -471,12 +551,20 @@ func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": buildinfo.Version})
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if s.credentialKeys == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "credential_vault_unavailable", "Credential vault is not ready")
+		return
+	}
 	if err := s.repo.Ping(r.Context()); err != nil {
 		writeError(w, r, http.StatusServiceUnavailable, "database_unavailable", "Database is not ready")
+		return
+	}
+	if s.cfg.AIWebAuthEnabled && s.authzStore == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "authorization_store_unavailable", "AI authorization store is not ready")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -488,6 +576,10 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Warn("metrics snapshot unavailable", "error", err)
 	}
+	authSnapshot, authErr := s.repo.AIAuthorizationMetrics(r.Context())
+	if authErr != nil {
+		s.logger.Warn("AI authorization metrics unavailable", "error", authErr)
+	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# HELP tokhub_build_info TokHub build info\n# TYPE tokhub_build_info gauge\ntokhub_build_info{role=%q} 1\n", s.cfg.Role)
 	fmt.Fprintf(&out, "# HELP tokhub_gateway_requests_total Gateway requests recorded\n# TYPE tokhub_gateway_requests_total counter\ntokhub_gateway_requests_total %d\n", snapshot.GatewayRequests)
@@ -497,6 +589,34 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&out, "# HELP tokhub_alert_deliveries_total Alert delivery events\n# TYPE tokhub_alert_deliveries_total counter\ntokhub_alert_deliveries_total %d\n", snapshot.AlertDeliveries)
 	fmt.Fprintf(&out, "# HELP tokhub_audit_events_total Audit events\n# TYPE tokhub_audit_events_total counter\ntokhub_audit_events_total %d\n", snapshot.AuditEvents)
 	fmt.Fprintf(&out, "# HELP tokhub_usage_rollups_total Usage rollup rows\n# TYPE tokhub_usage_rollups_total gauge\ntokhub_usage_rollups_total %d\n", snapshot.UsageRollups)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_connections_active Active official developer credential connections\n# TYPE tokhub_ai_connections_active gauge\ntokhub_ai_connections_active %d\n", snapshot.AIConnectionsActive)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_connections_attention Official developer credential connections requiring attention\n# TYPE tokhub_ai_connections_attention gauge\ntokhub_ai_connections_attention %d\n", snapshot.AIConnectionsAttention)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_connection_validations_total AI connection validation attempts\n# TYPE tokhub_ai_connection_validations_total counter\ntokhub_ai_connection_validations_total %d\n", snapshot.AIConnectionValidations)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_connection_validation_failures_total Failed AI connection validation attempts\n# TYPE tokhub_ai_connection_validation_failures_total counter\ntokhub_ai_connection_validation_failures_total %d\n", snapshot.AIConnectionValidationFailure)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_quick_relays_total Completed personal relays created from AI connections\n# TYPE tokhub_ai_quick_relays_total counter\ntokhub_ai_quick_relays_total %d\n", snapshot.AIQuickRelays)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_connectors_online Local browser connectors seen in the last 45 seconds\n# TYPE tokhub_ai_browser_connectors_online gauge\ntokhub_ai_browser_connectors_online %d\n", snapshot.AIBrowserConnectorsOnline)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_tasks_completed_total Completed local browser tasks\n# TYPE tokhub_ai_browser_tasks_completed_total counter\ntokhub_ai_browser_tasks_completed_total %d\n", snapshot.AIBrowserTasksCompleted)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_tasks_failed_total Failed local browser tasks\n# TYPE tokhub_ai_browser_tasks_failed_total counter\ntokhub_ai_browser_tasks_failed_total %d\n", snapshot.AIBrowserTasksFailed)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_tasks_expired_total Expired local browser tasks\n# TYPE tokhub_ai_browser_tasks_expired_total counter\ntokhub_ai_browser_tasks_expired_total %d\n", snapshot.AIBrowserTasksExpired)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_security_challenges_total Local browser tasks stopped by a security challenge\n# TYPE tokhub_ai_browser_security_challenges_total counter\ntokhub_ai_browser_security_challenges_total %d\n", snapshot.AIBrowserSecurityChallenges)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_accounts_cooling Local browser accounts in cooldown\n# TYPE tokhub_ai_browser_accounts_cooling gauge\ntokhub_ai_browser_accounts_cooling %d\n", snapshot.AIBrowserAccountsCooling)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_accounts_locked Local browser accounts locked by a security challenge\n# TYPE tokhub_ai_browser_accounts_locked gauge\ntokhub_ai_browser_accounts_locked %d\n", snapshot.AIBrowserAccountsLocked)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_accounts_reauth Local browser accounts requiring login recognition\n# TYPE tokhub_ai_browser_accounts_reauth gauge\ntokhub_ai_browser_accounts_reauth %d\n", snapshot.AIBrowserAccountsReauth)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_accounts_paused Local browser accounts paused by their owner\n# TYPE tokhub_ai_browser_accounts_paused gauge\ntokhub_ai_browser_accounts_paused %d\n", snapshot.AIBrowserAccountsPaused)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_adapters_blocked Local browser accounts blocked by adapter incompatibility\n# TYPE tokhub_ai_browser_adapters_blocked gauge\ntokhub_ai_browser_adapters_blocked %d\n", snapshot.AIBrowserAdaptersBlocked)
+	fmt.Fprintf(&out, "# HELP tokhub_ai_browser_rate_limit_events_current Provider rate-limit events in current account safety windows\n# TYPE tokhub_ai_browser_rate_limit_events_current gauge\ntokhub_ai_browser_rate_limit_events_current %d\n", snapshot.AIBrowserRateLimitEvents)
+	out.WriteString("# HELP tokhub_ai_authorization_attempts AI account authorization attempts by current state\n# TYPE tokhub_ai_authorization_attempts gauge\n")
+	for _, item := range authSnapshot.Attempts {
+		fmt.Fprintf(&out, "tokhub_ai_authorization_attempts{provider=%q,method=%q,status=%q} %d\n", item.Provider, item.Method, item.Status, item.Count)
+	}
+	out.WriteString("# HELP tokhub_ai_oauth_connections OAuth-backed AI connections by authorization state\n# TYPE tokhub_ai_oauth_connections gauge\n")
+	for _, item := range authSnapshot.Connections {
+		fmt.Fprintf(&out, "tokhub_ai_oauth_connections{provider=%q,method=%q,auth_status=%q} %d\n", item.Provider, item.Method, item.AuthStatus, item.Count)
+	}
+	out.WriteString("# HELP tokhub_ai_oauth_refresh_failures_current Consecutive OAuth refresh failures on current credentials\n# TYPE tokhub_ai_oauth_refresh_failures_current gauge\n")
+	for _, item := range authSnapshot.RefreshFailures {
+		fmt.Fprintf(&out, "tokhub_ai_oauth_refresh_failures_current{provider=%q} %d\n", item.Provider, item.Count)
+	}
 	_, _ = w.Write([]byte(out.String()))
 }
 

@@ -273,11 +273,19 @@ func (r *Repository) PublicChannels(ctx context.Context, filter ChannelFilter) (
 }
 
 func (r *Repository) PublicChannel(ctx context.Context, channelID string) (PublicChannelDetail, error) {
+	return r.publicChannelForRange(ctx, channelID, publicChannelRange{})
+}
+
+func (r *Repository) PublicChannelForRange(ctx context.Context, channelID string, value string) (PublicChannelDetail, error) {
+	return r.publicChannelForRange(ctx, channelID, normalizePublicChannelRange(value))
+}
+
+func (r *Repository) publicChannelForRange(ctx context.Context, channelID string, trendRange publicChannelRange) (PublicChannelDetail, error) {
 	resolvedID, err := r.resolvePublicChannelID(ctx, channelID)
 	if err != nil {
 		return PublicChannelDetail{}, err
 	}
-	rows, err := r.db.Query(ctx, publicChannelSQL("where "+publicChannelWhereClause("c")+" and c.id=$1", 0, 0), resolvedID)
+	rows, err := r.db.Query(ctx, publicChannelSQLForRange("where "+publicChannelWhereClause("c")+" and c.id=$1", 0, 0, trendRange), resolvedID)
 	if err != nil {
 		return PublicChannelDetail{}, err
 	}
@@ -733,11 +741,10 @@ func (r publicChannelRange) snapshotPredicate(alias string) string {
 	if r.hourly {
 		return fmt.Sprintf("%s.sampled_at >= now() - interval '24 hours' and %s.sampled_at < now()", alias, alias)
 	}
-	lookbackDays := r.days - 1
-	if lookbackDays < 0 {
-		lookbackDays = 0
+	if r.days > 0 {
+		return fmt.Sprintf("%s.sampled_at >= now() - interval '%d days' and %s.sampled_at < now()", alias, r.days, alias)
 	}
-	return fmt.Sprintf("%s.sampled_at >= current_date - (%d * interval '1 day') and %s.sampled_at < current_date + interval '1 day'", alias, lookbackDays, alias)
+	return "true"
 }
 
 func (r publicChannelRange) metricsJoinSQL() string {
@@ -764,22 +771,30 @@ func (r publicChannelRange) trendBucketsJoinSQL() string {
 	if r.all {
 		return `
 		left join lateral (
-			with ranked as (
-				select ntile(30) over (order by sampled_at asc) as bucket_number,sampled_at,score
-				from channel_status_snapshots
-				where channel_id=c.id
+			with buckets as (
+				select bucket_number,
+					all_bounds.first_at + (all_bounds.last_at - all_bounds.first_at) * ((bucket_number - 1)::float8 / 30) as bucket_start,
+					all_bounds.first_at + (all_bounds.last_at - all_bounds.first_at) * (bucket_number::float8 / 30) as bucket_end
+				from generate_series(1,30) as gs(bucket_number)
+				where all_bounds.first_at is not null and all_bounds.last_at > all_bounds.first_at
 			),
 			agg as (
-				select bucket_number,min(sampled_at) as first_at,max(sampled_at) as last_at,avg(score) as value
-				from ranked
-				group by bucket_number
+				select
+					floor(extract(epoch from ss.sampled_at - all_bounds.first_at) / extract(epoch from all_bounds.last_at - all_bounds.first_at) * 30)::int + 1 as bucket_number,
+					avg(ss.score) as value
+				from channel_status_snapshots ss
+				where ss.channel_id=c.id
+					and ss.sampled_at >= all_bounds.first_at
+					and ss.sampled_at < all_bounds.last_at
+				group by 1
 			)
 			select coalesce(jsonb_agg(jsonb_build_object(
-				'key', bucket_number::text,
-				'label', case when first_at::date=last_at::date then to_char(first_at,'MM-DD') else to_char(first_at,'MM-DD') || '/' || to_char(last_at,'MM-DD') end,
-				'value', round(value)::int
-			) order by bucket_number),'[]'::jsonb) as trend_buckets
-			from agg
+				'key', to_char(b.bucket_start at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+				'label', case when b.bucket_start::date=b.bucket_end::date then to_char(b.bucket_start,'MM-DD') else to_char(b.bucket_start,'MM-DD') || '/' || to_char(b.bucket_end,'MM-DD') end,
+				'value', case when agg.value is null then null else round(agg.value)::int end
+			) order by b.bucket_number),'[]'::jsonb) as trend_buckets
+			from buckets b
+			left join agg on agg.bucket_number=b.bucket_number
 		) tb on true
 		`
 	}
@@ -807,31 +822,51 @@ func (r publicChannelRange) trendBucketsJoinSQL() string {
 		) tb on true
 		`
 	}
-	lookbackDays := r.days - 1
-	if lookbackDays < 0 {
-		lookbackDays = 0
+	if r.days == 7 {
+		return `
+		left join lateral (
+			with buckets as (
+				select generate_series(now() - interval '7 days', now() - interval '8 hours', interval '8 hours') as bucket_start
+			),
+			agg as (
+				select b.bucket_start,avg(ss.score) as value
+				from buckets b
+				left join channel_status_snapshots ss on ss.channel_id=c.id
+					and ss.sampled_at >= b.bucket_start
+					and ss.sampled_at < b.bucket_start + interval '8 hours'
+				group by b.bucket_start
+			)
+			select jsonb_agg(jsonb_build_object(
+				'key', to_char(b.bucket_start at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+				'label', to_char(b.bucket_start,'MM-DD HH24:MI'),
+				'value', case when agg.value is null then null else round(agg.value)::int end
+			) order by b.bucket_start) as trend_buckets
+			from buckets b
+			left join agg on agg.bucket_start=b.bucket_start
+		) tb on true
+		`
 	}
 	return fmt.Sprintf(`
 		left join lateral (
 			with buckets as (
-				select gs::date as bucket_start
-				from generate_series(current_date - (%d * interval '1 day'), current_date, interval '1 day') gs
+				select generate_series(now() - interval '%d days', now() - interval '1 day', interval '1 day') as bucket_start
 			),
 			agg as (
-				select sampled_at::date as bucket_start,avg(score) as value
-				from channel_status_snapshots
-				where channel_id=c.id and sampled_at >= current_date - (%d * interval '1 day') and sampled_at < current_date + interval '1 day'
-				group by 1
+				select b.bucket_start,avg(ss.score) as value
+				from buckets b
+				left join channel_status_snapshots ss on ss.channel_id=c.id
+					and ss.sampled_at >= b.bucket_start and ss.sampled_at < b.bucket_start + interval '1 day'
+				group by b.bucket_start
 			)
 			select jsonb_agg(jsonb_build_object(
-				'key', to_char(b.bucket_start,'YYYY-MM-DD'),
+				'key', to_char(b.bucket_start at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 				'label', to_char(b.bucket_start,'MM-DD'),
 				'value', case when agg.value is null then null else round(agg.value)::int end
 			) order by b.bucket_start) as trend_buckets
 			from buckets b
 			left join agg on agg.bucket_start=b.bucket_start
 		) tb on true
-	`, lookbackDays, lookbackDays)
+	`, r.days)
 }
 
 func publicChannelSQL(tail string, limitArg int, offsetArg int) string {
@@ -860,6 +895,7 @@ func publicChannelSQLForRange(tail string, limitArg int, offsetArg int, trendRan
 			coalesce(mp.input_per_mtok,0),coalesce(mp.output_per_mtok,0),
 			coalesce(t.trend,'[]'::jsonb),coalesce(tb.trend_buckets,'[]'::jsonb)
 		from channels c
+		%s
 		left join lateral (
 			select * from channel_status_snapshots ss where ss.channel_id=c.id order by sampled_at desc limit 1
 		) s on true
@@ -878,11 +914,24 @@ func publicChannelSQLForRange(tail string, limitArg int, offsetArg int, trendRan
 			) tr
 		) t on true
 		%s
-		`, scoreExpr, uptimeExpr, successExpr, latencyExpr, trendRange.metricsJoinSQL(), trendRange.trendBucketsJoinSQL())
+		`, scoreExpr, uptimeExpr, successExpr, latencyExpr, trendRange.allTimeBoundsJoinSQL(), trendRange.metricsJoinSQL(), trendRange.trendBucketsJoinSQL())
 	if limitArg > 0 && offsetArg > 0 {
 		return base + fmt.Sprintf(tail, limitArg, offsetArg)
 	}
 	return base + tail
+}
+
+func (r publicChannelRange) allTimeBoundsJoinSQL() string {
+	if !r.all {
+		return ""
+	}
+	return `
+		cross join (
+			select min(ss.sampled_at) as first_at,now() as last_at
+			from channel_status_snapshots ss
+			join channels c2 on c2.id=ss.channel_id
+			where ` + publicChannelWhereClause("c2") + `
+		) all_bounds`
 }
 
 func scanPublicChannels(rows pgx.Rows) ([]PublicChannel, error) {
